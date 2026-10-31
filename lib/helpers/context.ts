@@ -3,7 +3,7 @@ import type { AsenaContext } from '@asenajs/asena/adapter';
 /** The cookie surface of a native provider that the cookie helpers need. */
 export interface SessionCookieSource {
   readonly cookieName: string;
-  readonly cookieOptions: { path?: string; domain?: string } & Record<string, unknown>;
+  readonly cookieOptions: { path?: string; domain?: string };
 }
 
 /** The web `Request` behind a context: `ctx.req` on ergenecore, `ctx.req.raw` on hono. */

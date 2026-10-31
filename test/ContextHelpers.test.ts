@@ -1,5 +1,10 @@
 import { describe, expect, mock, test } from 'bun:test';
+import { AsenaAuthService } from '../lib/AsenaAuthService';
+import { Auth } from '../lib/decorators';
 import { applySessionCookie, clearSessionCookie, getRawRequest } from '../lib/helpers';
+
+@Auth({ sessionTtl: 60, cookie: { domain: 'example.com' } })
+class RealAuth extends AsenaAuthService {}
 
 const service = {
   cookieName: 'asena_session',
@@ -41,6 +46,20 @@ describe('session cookie helpers', () => {
 
     await clearSessionCookie({ deleteCookie } as any, service);
 
+    expect(deleteCookie).toHaveBeenCalledWith('asena_session', {
+      extraOptions: { path: '/', domain: 'example.com' },
+    });
+  });
+
+  test('accept a real AsenaAuthService without a cast', async () => {
+    const real: AsenaAuthService = new (RealAuth as any)();
+    const setCookie = mock(async () => {});
+    const deleteCookie = mock(async () => {});
+
+    await applySessionCookie({ setCookie } as any, real, 'tok');
+    await clearSessionCookie({ deleteCookie } as any, real);
+
+    expect(setCookie).toHaveBeenCalledWith('asena_session', 'tok', { extraOptions: real.cookieOptions });
     expect(deleteCookie).toHaveBeenCalledWith('asena_session', {
       extraOptions: { path: '/', domain: 'example.com' },
     });
