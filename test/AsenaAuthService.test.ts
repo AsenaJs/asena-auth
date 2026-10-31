@@ -2,7 +2,9 @@ import { afterEach, describe, expect, setSystemTime, spyOn, test } from 'bun:tes
 import { AUTH_PROVIDER_KEY } from '@asenajs/asena/auth';
 import type { AuthSession } from '@asenajs/asena/auth';
 import { ComponentConstants } from '@asenajs/asena/ioc/constants';
+import { createTestApp, silentLogger } from '@asenajs/asena/test';
 import { getOwnTypedMetadata, getTypedMetadata } from '@asenajs/asena/utils';
+import { createErgenecoreAdapter } from '@asenajs/ergenecore';
 import { AsenaAuthService } from '../lib/AsenaAuthService';
 import { Auth } from '../lib/decorators';
 import { MemoryAuthStore } from '../lib/store';
@@ -287,6 +289,57 @@ describe('sessions', () => {
     await auth.onStop();
 
     expect(start).toHaveBeenCalledTimes(1);
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  test('through the container a supplied store starts and stops once, although core builds the provider twice', async () => {
+    const store = new MemoryAuthStore();
+    const start = spyOn(store, 'onStart');
+    const stop = spyOn(store, 'onStop');
+
+    @Auth({ store })
+    class Counted extends AsenaAuthService {}
+
+    const app = await createTestApp({
+      adapter: createErgenecoreAdapter({ logger: silentLogger }),
+      logger: silentLogger,
+      components: [Counted],
+    });
+
+    try {
+      expect(start).toHaveBeenCalledTimes(1);
+      expect(stop).not.toHaveBeenCalled();
+    } finally {
+      await app.stop();
+    }
+
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  test('two providers sharing one store: it stops only when the last one stops', async () => {
+    const store = new MemoryAuthStore();
+    const start = spyOn(store, 'onStart');
+    const stop = spyOn(store, 'onStop');
+
+    @Auth({ store })
+    class First extends AsenaAuthService {}
+
+    @Auth({ store })
+    class Second extends AsenaAuthService {}
+
+    const first = make(First);
+    const second = make(Second);
+
+    await first.onStart();
+    await second.onStart();
+    await first.onStop();
+
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(stop).not.toHaveBeenCalled();
+
+    await second.onStop();
+    await second.onStop();
+
     expect(stop).toHaveBeenCalledTimes(1);
   });
 });

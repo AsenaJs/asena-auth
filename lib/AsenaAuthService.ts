@@ -8,6 +8,9 @@ import type { AuthOptions } from './types';
 const DEFAULT_TTL_SECONDS = 604_800;
 const DEFAULT_COOKIE_NAME = 'asena_session';
 
+// Core 0.12 constructs an @Implements singleton twice, so a shared store would otherwise start and stop twice.
+const storeUsers = new WeakMap<AuthSessionStore<any>, number>();
+
 export interface SessionCookieOptions {
   httpOnly: true;
   sameSite: 'strict' | 'lax' | 'none';
@@ -26,6 +29,8 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
 
   protected store: AuthSessionStore<TUser> | null = null;
 
+  private startedStore: AuthSessionStore<TUser> | null = null;
+
   private readonly slidCookies = new WeakMap<Request, string>();
 
   @OnStart()
@@ -36,12 +41,37 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
       );
     }
 
-    await this.store.onStart?.();
+    if (this.startedStore) {
+      return;
+    }
+
+    const users = storeUsers.get(this.store) ?? 0;
+
+    if (users === 0) {
+      await this.store.onStart?.();
+    }
+
+    storeUsers.set(this.store, users + 1);
+    this.startedStore = this.store;
   }
 
   @OnStop()
   public async onStop(): Promise<void> {
-    await this.store?.onStop?.();
+    const store = this.startedStore;
+
+    if (!store) {
+      return;
+    }
+
+    this.startedStore = null;
+
+    const users = (storeUsers.get(store) ?? 1) - 1;
+
+    storeUsers.set(store, users);
+
+    if (users === 0) {
+      await store.onStop?.();
+    }
   }
 
   public get primary(): boolean {

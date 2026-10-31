@@ -22,6 +22,8 @@ export interface AuthSessionStore<TUser = AuthUser> {
   delete(id: string): Promise<void>;
   deleteByUser(userId: string): Promise<void>;
   touch(id: string, expiresAt: number): Promise<void>;
+  /** Called once per store object, when the first provider using it starts. */
   onStart?(): void | Promise<void>;
+  /** Called once per store object, when the last provider using it stops. */
   onStop?(): void | Promise<void>;
 }
