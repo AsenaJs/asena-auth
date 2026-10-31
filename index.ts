@@ -5,12 +5,20 @@ export { Auth } from './lib/decorators';
 
 export * from './lib/guard';
 
+export * from './lib/middleware';
+
 export { MemoryAuthStore } from './lib/store';
 export type { AuthSessionStore, StoredSession } from './lib/store';
 
 export { generateToken, hashToken, hashPassword, verifyPassword } from './lib/crypto';
 
-export { applySessionCookie, clearSessionCookie, getRawRequest, defaultRolesResolver } from './lib/helpers';
+export {
+  applySessionCookie,
+  clearSessionCookie,
+  getRawRequest,
+  withSubprotocolToken,
+  defaultRolesResolver,
+} from './lib/helpers';
 export type { SessionCookieSource } from './lib/helpers';
 
 export { AUTH_REGISTRY_NAME, AUTH_GUARD_NAME, AUTH_GUARD_MIDDLEWARE_NAME, WS_TOKEN_SUBPROTOCOL } from './lib/types';

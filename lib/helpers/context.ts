@@ -1,4 +1,5 @@
 import type { AsenaContext } from '@asenajs/asena/adapter';
+import { WS_TOKEN_SUBPROTOCOL } from '../types';
 
 /** The cookie surface of a native provider that the cookie helpers need. */
 export interface SessionCookieSource {
@@ -11,6 +12,28 @@ export function getRawRequest(ctx: AsenaContext<any, any>): Request {
   const req = ctx.req as any;
 
   return typeof req?.raw === 'object' && req.raw !== null ? req.raw : req;
+}
+
+/**
+ * A copy of a WebSocket upgrade request carrying `Authorization: Bearer <token>` when the client
+ * sent `Sec-WebSocket-Protocol: bearer, <token>` and no `Authorization` header; otherwise `request` itself.
+ */
+export function withSubprotocolToken(request: Request): Request {
+  if (request.headers.has('authorization')) {
+    return request;
+  }
+
+  const [scheme, token] = (request.headers.get('sec-websocket-protocol') ?? '').split(',').map((p) => p.trim());
+
+  if (scheme?.toLowerCase() !== WS_TOKEN_SUBPROTOCOL || !token) {
+    return request;
+  }
+
+  const headers = new Headers(request.headers);
+
+  headers.set('authorization', `Bearer ${token}`);
+
+  return new Request(request, { headers });
 }
 
 export async function applySessionCookie(

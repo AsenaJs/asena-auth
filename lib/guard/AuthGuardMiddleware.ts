@@ -1,14 +1,12 @@
 import { HttpException } from '@asenajs/asena/adapter';
 import type { AsenaContext, AsenaNextHandler } from '@asenajs/asena/adapter';
-import { AUTH_SESSION_CONTEXT_KEY } from '@asenajs/asena/auth';
-import type { AuthSession } from '@asenajs/asena/auth';
 import { Middleware } from '@asenajs/asena/decorators';
 import { Inject } from '@asenajs/asena/decorators/ioc';
 import { ICoreServiceNames } from '@asenajs/asena/ioc/types';
 import type { ServerLogger } from '@asenajs/asena/logger';
 import { AsenaMiddlewareService } from '@asenajs/asena/middleware';
-import { AsenaAuthService } from '../AsenaAuthService';
-import { applySessionCookie, getRawRequest } from '../helpers/context';
+import { getRawRequest } from '../helpers/context';
+import { resolveSession } from '../middleware/resolveSession';
 import { AUTH_GUARD_MIDDLEWARE_NAME, AUTH_GUARD_NAME, AUTH_REGISTRY_NAME } from '../types';
 import type { AuthProviderRegistryLike } from '../types';
 import type { AuthGuard } from './AuthGuard';
@@ -39,20 +37,7 @@ export class AuthGuardMiddleware extends AsenaMiddlewareService {
     }
 
     const provider = this.registry.select(mark.provider);
-    let session: AuthSession | null | undefined = ctx.getValue(AUTH_SESSION_CONTEXT_KEY);
-
-    if (session === undefined) {
-      const request = getRawRequest(ctx);
-
-      session = (await provider.getSession(request)) ?? null;
-      ctx.setValue(AUTH_SESSION_CONTEXT_KEY, session);
-
-      const slidToken = provider instanceof AsenaAuthService ? provider.slidCookieToken(request) : null;
-
-      if (slidToken) {
-        await applySessionCookie(ctx, provider as AsenaAuthService, slidToken);
-      }
-    }
+    const session = await resolveSession(ctx, provider, getRawRequest(ctx));
 
     if (!session) {
       throw new HttpException(401, 'Unauthorized');
