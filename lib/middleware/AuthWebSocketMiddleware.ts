@@ -21,6 +21,11 @@ export class AuthWebSocketMiddleware extends AsenaMiddlewareService {
 
   @OnStart()
   public onStart(): void {
+    // authComponents registers this middleware even when unused, and several providers without a primary are valid then.
+    if (this.providerName === undefined && this.registry.providers.size > 1) {
+      return;
+    }
+
     this.registry.select(this.providerName);
   }
 

@@ -62,6 +62,20 @@ describe('AuthSessionMiddleware', () => {
     expect(registry.select).toHaveBeenCalledWith('Other');
   });
 
+  test('onStart tolerates several providers without a primary when no provider is named', () => {
+    const { middleware, registry } = build();
+
+    (registry as any).providers = new Map([
+      ['A', stubProvider()],
+      ['B', stubProvider()],
+    ]);
+    registry.select.mockImplementation(() => {
+      throw new Error('none is primary');
+    });
+
+    expect(() => middleware.onStart()).not.toThrow();
+  });
+
   test('onStart fails the boot when the registry cannot select a provider', () => {
     const { middleware, registry } = build();
 
