@@ -418,6 +418,34 @@ describe.each(adapters)('asena-auth end to end on $name', ({ make, routes }) => 
     expect(await connect(app.wsUrl('/chat'))).toEqual({ opened: false });
   });
 
+  test("WebSocket under the global AuthSessionMiddleware: the subprotocol token wins over the cookie's user", async () => {
+    await using app = await boot([SessionConfig]);
+    const { token: tokenA } = await login(app);
+    const loginB = await fetch(`${app.baseUrl}/auth/login`, json({ id: 'u2', roles: [] }));
+    const { token: tokenB } = (await loginB.json()) as { token: string };
+    const cookie = `asena_session=${tokenA}`;
+
+    const cookieOnly = await connect(app.wsUrl('/chat'), { headers: { cookie } });
+
+    expect(cookieOnly.opened).toBe(true);
+
+    if (cookieOnly.opened) {
+      expect(cookieOnly.message.authSession.user.id).toBe('u1');
+    }
+
+    const swapped = await connect(app.wsUrl('/chat'), { headers: { cookie }, protocols: ['bearer', tokenB] });
+
+    expect(swapped.opened).toBe(true);
+
+    if (swapped.opened) {
+      expect(swapped.message.authSession.user.id).toBe('u2');
+    }
+
+    expect(await connect(app.wsUrl('/chat'), { headers: { cookie }, protocols: ['bearer', 'invalid'] })).toEqual({
+      opened: false,
+    });
+  });
+
   test('BetterAuthController returns the Better Auth handler Response unchanged', async () => {
     await using app = await boot();
 

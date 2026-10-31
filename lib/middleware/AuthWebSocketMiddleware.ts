@@ -32,7 +32,7 @@ export class AuthWebSocketMiddleware extends AsenaMiddlewareService {
   public async handle(ctx: AsenaContext<any, any>, next: AsenaNextHandler): Promise<Response | undefined> {
     const raw = getRawRequest(ctx);
     const request = withSubprotocolToken(raw);
-    // A global session middleware saw the upgrade without the subprotocol token; its null is not final.
+    // A global session middleware saw the upgrade without the subprotocol token; its verdict is not final.
     const session = await resolveSession(ctx, this.registry.select(this.providerName), request, request === raw);
 
     if (!session) {

@@ -82,16 +82,42 @@ describe('AuthWebSocketMiddleware', () => {
     expect(provider.getSession).not.toHaveBeenCalled();
   });
 
-  test('a session already in the context is reused', async () => {
+  test('a session already in the context is reused when the upgrade carries no subprotocol token', async () => {
     const { middleware, provider } = build();
+    const ctx = stubContext(upgrade(), { [AUTH_SESSION_CONTEXT_KEY]: session });
+
+    await middleware.handle(ctx as any, async () => {});
+
+    expect(provider.getSession).not.toHaveBeenCalled();
+    expect(ctx.getWebSocketValue()).toEqual({ [AUTH_SESSION_CONTEXT_KEY]: session });
+  });
+
+  test("a subprotocol token replaces an earlier cookie session - the socket is the token's user", async () => {
+    const other = { ...session, user: { id: 'u2' } };
+    const { middleware, provider } = build(stubProvider(other));
     const ctx = stubContext(upgrade({ 'sec-websocket-protocol': 'bearer, abc' }), {
       [AUTH_SESSION_CONTEXT_KEY]: session,
     });
 
     await middleware.handle(ctx as any, async () => {});
 
-    expect(provider.getSession).not.toHaveBeenCalled();
-    expect(ctx.getWebSocketValue()).toEqual({ [AUTH_SESSION_CONTEXT_KEY]: session });
+    expect(provider.getSession).toHaveBeenCalledTimes(1);
+    expect(ctx.getWebSocketValue()).toEqual({ [AUTH_SESSION_CONTEXT_KEY]: other });
+    expect(ctx.getValue(AUTH_SESSION_CONTEXT_KEY)).toBe(other);
+  });
+
+  test('an invalid subprotocol token is rejected even over an earlier cookie session', async () => {
+    const { middleware, provider } = build(stubProvider(null));
+    const ctx = stubContext(upgrade({ 'sec-websocket-protocol': 'bearer, bad' }), {
+      [AUTH_SESSION_CONTEXT_KEY]: session,
+    });
+    const next = mock(async () => {});
+
+    const result = await middleware.handle(ctx as any, next);
+
+    expect((result as Response).status).toBe(401);
+    expect(provider.getSession).toHaveBeenCalledTimes(1);
+    expect(next).not.toHaveBeenCalled();
   });
 
   test('onStart fails the boot when the registry cannot select a provider', () => {

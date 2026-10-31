@@ -9,21 +9,21 @@ const resolvedBy = new WeakMap<Request, AsenaAuthProvider>();
 /**
  * The request's session, asking `provider` at most once per request: a value already in the
  * context (`null` = resolved anonymous) is returned as is, unless another provider resolved it.
- * A native cookie session that slid gets its cookie re-issued. Pass `reuseAnonymous: false` to
- * ask again over an earlier `null`.
+ * A native cookie session that slid gets its cookie re-issued. Pass `reuse: false` when `request`
+ * carries credentials the earlier resolution did not see, to ask again whatever the context holds.
  */
 export async function resolveSession(
   ctx: AsenaContext<any, any>,
   provider: AsenaAuthProvider,
   request: Request,
-  reuseAnonymous = true,
+  reuse = true,
 ): Promise<AuthSession | null> {
   const raw = getRawRequest(ctx);
   const known: AuthSession | null | undefined = ctx.getValue(AUTH_SESSION_CONTEXT_KEY);
   const owner = resolvedBy.get(raw);
-  const reusable = owner === undefined || owner === provider;
+  const reusable = reuse && (owner === undefined || owner === provider);
 
-  if (reusable && (known || (known === null && reuseAnonymous))) {
+  if (reusable && known !== undefined) {
     return known;
   }
 
