@@ -1,10 +1,11 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, setSystemTime, test } from 'bun:test';
 import { Protected, Public, Roles, getAuthSession } from '@asenajs/asena/auth';
 import { Controller, Middleware } from '@asenajs/asena/decorators';
 import { Get, Post } from '@asenajs/asena/decorators/http';
 import { AsenaMiddlewareService } from '@asenajs/asena/middleware';
 import { createTestApp, silentLogger } from '@asenajs/asena/test';
 import { ValidationService, createErgenecoreAdapter } from '@asenajs/ergenecore';
+import { createHonoAdapter } from '@asenajs/hono-adapter';
 import { z } from 'zod';
 import { AsenaAuthService } from '../lib/AsenaAuthService';
 import { Auth } from '../lib/decorators';
@@ -161,5 +162,54 @@ describe('guard on ergenecore', () => {
 
     expect((await fetch(`${app.baseUrl}/users`)).status).toBe(401);
     expect((await fetch(`${app.baseUrl}/open-users`)).status).toBe(200);
+  });
+});
+
+describe.each([
+  { name: 'ergenecore', make: () => createErgenecoreAdapter({ logger: silentLogger }) },
+  { name: 'hono', make: () => createHonoAdapter({ logger: silentLogger })[0] },
+])('sliding cookie on $name', ({ make }) => {
+  const bootUsers = () =>
+    createTestApp({
+      adapter: make(),
+      logger: silentLogger,
+      components: [AppAuth, Users],
+      imports: [AuthGuard, AuthGuardMiddleware, AuthProviderRegistry],
+    });
+
+  afterEach(() => {
+    setSystemTime();
+  });
+
+  test('a cookie session past half-life gets its cookie re-issued with a fresh Max-Age', async () => {
+    await using app = await bootUsers();
+    const token = await tokenFor(app as any);
+    const viaCookie = { cookie: `asena_session=${token}` };
+
+    const early = await fetch(`${app.baseUrl}/users`, { headers: viaCookie });
+
+    expect(early.status).toBe(200);
+    expect(early.headers.get('set-cookie')).toBeNull();
+
+    setSystemTime(new Date(Date.now() + 2_000_000));
+
+    const slid = await fetch(`${app.baseUrl}/users`, { headers: viaCookie });
+    const setCookie = slid.headers.get('set-cookie') ?? '';
+
+    expect(slid.status).toBe(200);
+    expect(setCookie).toContain(`asena_session=${token}`);
+    expect(setCookie).toContain('Max-Age=3600');
+  });
+
+  test('a Bearer session that slides gets no cookie', async () => {
+    await using app = await bootUsers();
+    const token = await tokenFor(app as any);
+
+    setSystemTime(new Date(Date.now() + 2_000_000));
+
+    const res = await fetch(`${app.baseUrl}/users`, { headers: auth(token) });
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('set-cookie')).toBeNull();
   });
 });

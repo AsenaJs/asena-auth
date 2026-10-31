@@ -189,6 +189,33 @@ describe('sessions', () => {
     expect(session.session.expiresAt.getTime()).toBe(later + 10_000);
   });
 
+  test('sliding: a cookie-carried slide reports the token so the cookie can be re-issued; Bearer does not', async () => {
+    @Auth({ sessionTtl: 10 })
+    class Sliding extends AsenaAuthService {}
+
+    const auth = make(Sliding);
+    const { token } = await auth.createSession({ id: 'u1' });
+
+    const early = cookie(token);
+
+    await auth.getSession(early);
+    expect(auth.slidCookieToken(early)).toBeNull();
+
+    setSystemTime(new Date(Date.now() + 6_000));
+
+    const viaBearer = bearer(token);
+
+    await auth.getSession(viaBearer);
+    expect(auth.slidCookieToken(viaBearer)).toBeNull();
+
+    setSystemTime(new Date(Date.now() + 6_000));
+
+    const viaCookie = cookie(token);
+
+    await auth.getSession(viaCookie);
+    expect(auth.slidCookieToken(viaCookie)).toBe(token);
+  });
+
   test('sliding: false never refreshes', async () => {
     const store = new MemoryAuthStore();
     const touch = spyOn(store, 'touch');

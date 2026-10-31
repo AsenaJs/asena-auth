@@ -26,6 +26,8 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
 
   protected store: AuthSessionStore<TUser> | null = null;
 
+  private readonly slidCookies = new WeakMap<Request, string>();
+
   @OnStart()
   public async onStart(): Promise<void> {
     if (!this.options || !this.store) {
@@ -84,7 +86,8 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
   }
 
   public async getSession(request: Request): Promise<AuthSession<TUser> | null> {
-    const token = this.readToken(request);
+    const bearerToken = this.readBearer(request);
+    const token = bearerToken ?? this.readCookie(request.headers.get('cookie'));
 
     if (!token) {
       return null;
@@ -105,10 +108,19 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
 
       await store.touch(stored.id, expiresAt);
 
+      if (!bearerToken) {
+        this.slidCookies.set(request, token);
+      }
+
       return this.toAuthSession({ ...stored, expiresAt });
     }
 
     return this.toAuthSession(stored);
+  }
+
+  /** The cookie token whose session `getSession(request)` slid, so the caller can re-issue the cookie; else `null`. */
+  public slidCookieToken(request: Request): string | null {
+    return this.slidCookies.get(request) ?? null;
   }
 
   public getRoles(session: AuthSession<TUser>): string[] {
@@ -145,16 +157,12 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
     return this.getOptions().sessionTtl ?? DEFAULT_TTL_SECONDS;
   }
 
-  private readToken(request: Request): string | null {
-    if (this.getOptions().header !== false) {
-      const match = /^bearer\s+(\S+)\s*$/i.exec(request.headers.get('authorization') ?? '');
-
-      if (match) {
-        return match[1];
-      }
+  private readBearer(request: Request): string | null {
+    if (this.getOptions().header === false) {
+      return null;
     }
 
-    return this.readCookie(request.headers.get('cookie'));
+    return /^bearer\s+(\S+)\s*$/i.exec(request.headers.get('authorization') ?? '')?.[1] ?? null;
   }
 
   private readCookie(header: string | null): string | null {

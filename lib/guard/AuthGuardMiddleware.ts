@@ -7,7 +7,8 @@ import { Inject } from '@asenajs/asena/decorators/ioc';
 import { ICoreServiceNames } from '@asenajs/asena/ioc/types';
 import type { ServerLogger } from '@asenajs/asena/logger';
 import { AsenaMiddlewareService } from '@asenajs/asena/middleware';
-import { getRawRequest } from '../helpers/context';
+import { AsenaAuthService } from '../AsenaAuthService';
+import { applySessionCookie, getRawRequest } from '../helpers/context';
 import { AUTH_GUARD_MIDDLEWARE_NAME, AUTH_GUARD_NAME, AUTH_REGISTRY_NAME } from '../types';
 import type { AuthProviderRegistryLike } from '../types';
 import type { AuthGuard } from './AuthGuard';
@@ -41,8 +42,16 @@ export class AuthGuardMiddleware extends AsenaMiddlewareService {
     let session: AuthSession | null | undefined = ctx.getValue(AUTH_SESSION_CONTEXT_KEY);
 
     if (session === undefined) {
-      session = (await provider.getSession(getRawRequest(ctx))) ?? null;
+      const request = getRawRequest(ctx);
+
+      session = (await provider.getSession(request)) ?? null;
       ctx.setValue(AUTH_SESSION_CONTEXT_KEY, session);
+
+      const slidToken = provider instanceof AsenaAuthService ? provider.slidCookieToken(request) : null;
+
+      if (slidToken) {
+        await applySessionCookie(ctx, provider as AsenaAuthService, slidToken);
+      }
     }
 
     if (!session) {
