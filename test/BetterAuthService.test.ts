@@ -7,9 +7,17 @@ import type { BetterAuthInstance } from '../lib/types';
 
 const user = { id: 'u1', email: 'a@b.c', role: 'admin,user' };
 
-const mockAuth = (result: { session: any; user: any } | null): BetterAuthInstance & { api: { getSession: any } } => ({
+const mockAuth = (
+  result: { session: any; user: any } | null,
+  responseHeaders = new Headers(),
+): BetterAuthInstance & { api: { getSession: any } } => ({
   handler: async () => new Response(null),
-  api: { getSession: mock(async (_opts: { headers: Headers }) => result) },
+  api: {
+    getSession: mock(async (_opts: { headers: Headers; returnHeaders: true }) => ({
+      headers: responseHeaders,
+      response: result,
+    })),
+  },
 });
 
 const providerFor = (auth: BetterAuthInstance, extra: Record<string, unknown> = {}) => {
@@ -38,11 +46,29 @@ describe('BetterAuthService.getSession', () => {
         expiresAt: new Date('2026-01-08T00:00:00Z'),
       },
     });
-    expect(auth.api.getSession).toHaveBeenCalledWith({ headers: request.headers });
+    expect(auth.api.getSession).toHaveBeenCalledWith({ headers: request.headers, returnHeaders: true });
   });
 
   test('null passes through', async () => {
     expect(await providerFor(mockAuth(null)).getSession(new Request('http://localhost/'))).toBeNull();
+  });
+
+  test('Set-Cookie headers Better Auth answers with (session refresh) are kept per request', async () => {
+    const headers = new Headers();
+
+    headers.append('set-cookie', 'better-auth.session_token=t.sig%3D; Max-Age=604800; Path=/; HttpOnly');
+    headers.append('set-cookie', 'better-auth.session_data=; Max-Age=0; Path=/');
+
+    const provider = providerFor(mockAuth(null, headers));
+    const request = new Request('http://localhost/');
+
+    await provider.getSession(request);
+
+    expect(provider.responseCookies(request)).toEqual([
+      'better-auth.session_token=t.sig%3D; Max-Age=604800; Path=/; HttpOnly',
+      'better-auth.session_data=; Max-Age=0; Path=/',
+    ]);
+    expect(provider.responseCookies(new Request('http://localhost/'))).toEqual([]);
   });
 
   test.each([
@@ -75,7 +101,7 @@ describe('BetterAuthService.getRoles', () => {
 describe('BetterAuthService configuration', () => {
   test.each([
     ['an empty object', {}],
-    ['no handler', { api: { getSession: async () => null } }],
+    ['no handler', { api: { getSession: async () => ({ headers: new Headers(), response: null }) } }],
     ['no api.getSession', { handler: async () => new Response(null), api: {} }],
   ])('@BetterAuth with %s fails at construction, naming what is missing', (_case, auth) => {
     @BetterAuth({ auth: auth as any })

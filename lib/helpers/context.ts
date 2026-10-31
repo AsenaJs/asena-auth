@@ -44,6 +44,17 @@ export async function applySessionCookie(
   await ctx.setCookie(service.cookieName, token, { extraOptions: service.cookieOptions });
 }
 
+/** Writes raw `Set-Cookie` values through `ctx.setCookie`, the only cookie path both adapters support. */
+export async function forwardSetCookies(ctx: AsenaContext<any, any>, setCookies: string[]): Promise<void> {
+  for (const header of setCookies) {
+    const { name, value, ...attributes } = Bun.Cookie.parse(header).toJSON();
+    const extraOptions = Object.fromEntries(Object.entries(attributes).filter(([, v]) => v !== undefined));
+
+    // Both adapters encodeURIComponent the value and Bun.Cookie.parse does not decode it.
+    await ctx.setCookie(name, decodeURIComponent(value), { extraOptions });
+  }
+}
+
 export async function clearSessionCookie(ctx: AsenaContext<any, any>, service: SessionCookieSource): Promise<void> {
   const { path, domain, secure, sameSite } = service.cookieOptions;
 

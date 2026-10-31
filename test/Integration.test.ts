@@ -40,15 +40,29 @@ const mockBetterAuth: BetterAuthInstance = {
   handler: async (req) =>
     new Response(JSON.stringify({ path: new URL(req.url).pathname, method: req.method }), { status: 201 }),
   api: {
-    getSession: async ({ headers }) =>
-      headers.get('authorization') === 'Bearer ba-token'
-        ? {
-            session: { id: 'bs1', userId: 'b1', createdAt: new Date(), expiresAt: new Date(Date.now() + hour) },
-            user: { id: 'b1', role: 'admin,user' },
-          }
-        : null,
+    getSession: async ({ headers }) => {
+      if (headers.get('authorization') !== 'Bearer ba-token') {
+        return { headers: new Headers(), response: null };
+      }
+
+      const refreshed = new Headers();
+
+      if (headers.get('x-refresh') === '1') {
+        refreshed.append('set-cookie', baRefreshCookie);
+      }
+
+      return {
+        headers: refreshed,
+        response: {
+          session: { id: 'bs1', userId: 'b1', createdAt: new Date(), expiresAt: new Date(Date.now() + hour) },
+          user: { id: 'b1', role: 'admin,user' },
+        },
+      };
+    },
   },
 };
+
+const baRefreshCookie = 'better-auth.session_token=ba-token.sig%2Bx%3D; Max-Age=604800; Path=/; HttpOnly; SameSite=Lax';
 
 @Auth({ primary: true, sessionTtl: 3600 })
 class AppAuth extends AsenaAuthService {
@@ -444,6 +458,28 @@ describe.each(adapters)('asena-auth end to end on $name', ({ make, routes }) => 
     expect(await connect(app.wsUrl('/chat'), { headers: { cookie }, protocols: ['bearer', 'invalid'] })).toEqual({
       opened: false,
     });
+  });
+
+  test("Better Auth's session-refresh Set-Cookie reaches the client on a guarded route, value unchanged", async () => {
+    await using app = await boot();
+
+    const plain = await fetch(`${app.baseUrl}/ba`, { headers: bearer('ba-token') });
+
+    expect(plain.status).toBe(200);
+    expect(plain.headers.getSetCookie()).toEqual([]);
+
+    const res = await fetch(`${app.baseUrl}/ba`, { headers: { ...bearer('ba-token'), 'x-refresh': '1' } });
+
+    expect(res.status).toBe(200);
+
+    const [cookie] = res.headers.getSetCookie();
+    const parsed = Bun.Cookie.parse(cookie ?? '');
+
+    expect(parsed.name).toBe('better-auth.session_token');
+    expect(parsed.value).toBe('ba-token.sig%2Bx%3D');
+    expect(parsed.maxAge).toBe(604800);
+    expect(parsed.httpOnly).toBe(true);
+    expect(parsed.path).toBe('/');
   });
 
   test('BetterAuthController returns the Better Auth handler Response unchanged', async () => {

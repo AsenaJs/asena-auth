@@ -12,7 +12,12 @@ export const WS_TOKEN_SUBPROTOCOL = 'bearer';
  */
 export interface BetterAuthInstance {
   handler: (request: Request) => Promise<Response>;
-  api: { getSession: (opts: { headers: Headers }) => Promise<{ session: any; user: any } | null> };
+  api: {
+    getSession: (opts: {
+      headers: Headers;
+      returnHeaders: true;
+    }) => Promise<{ headers: Headers; response: { session: any; user: any } | null }>;
+  };
 }
 
 /** What the session and WebSocket middlewares inject by name instead of the registry class. */

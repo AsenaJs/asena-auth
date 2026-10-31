@@ -9,6 +9,8 @@ import type { BetterAuthInstance, BetterAuthOptions } from '../types';
 export abstract class BetterAuthService<TUser extends AuthUser = AuthUser> implements AsenaAuthProvider<TUser> {
   protected options: BetterAuthOptions<TUser> | null = null;
 
+  private readonly setCookies = new WeakMap<Request, string[]>();
+
   public get primary(): boolean {
     return this.getOptions().primary === true;
   }
@@ -18,15 +20,21 @@ export abstract class BetterAuthService<TUser extends AuthUser = AuthUser> imple
   }
 
   public async getSession(request: Request): Promise<AuthSession<TUser> | null> {
-    const result = await this.instance.api.getSession({ headers: request.headers });
-    const session = result?.session;
+    const { headers, response } = await this.instance.api.getSession({ headers: request.headers, returnHeaders: true });
+    const cookies = headers.getSetCookie();
+
+    if (cookies.length > 0) {
+      this.setCookies.set(request, cookies);
+    }
+
+    const session = response?.session;
 
     if (!session?.id || !session.userId) {
       return null;
     }
 
     return {
-      user: { ...result.user },
+      user: { ...response.user },
       session: {
         id: session.id,
         userId: session.userId,
@@ -34,6 +42,11 @@ export abstract class BetterAuthService<TUser extends AuthUser = AuthUser> imple
         expiresAt: new Date(session.expiresAt),
       },
     };
+  }
+
+  /** The `Set-Cookie` values Better Auth answered `getSession(request)` with (e.g. a session refresh); else `[]`. */
+  public responseCookies(request: Request): string[] {
+    return this.setCookies.get(request) ?? [];
   }
 
   public getRoles(session: AuthSession<TUser>): string[] {

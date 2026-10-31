@@ -15,7 +15,7 @@ const seen: unknown[] = [];
 
       return new Response(JSON.stringify({ path: new URL(req.url).pathname, method: req.method }), { status: 201 });
     },
-    api: { getSession: async () => null },
+    api: { getSession: async () => ({ headers: new Headers(), response: null }) },
   },
 })
 class AppBA extends BetterAuthService {}

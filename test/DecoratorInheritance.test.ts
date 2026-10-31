@@ -38,7 +38,12 @@ describe('@Auth inheritance', () => {
       }
     }
 
-    @BetterAuth({ auth: { handler: async () => new Response(null), api: { getSession: async () => null } } })
+    @BetterAuth({
+      auth: {
+        handler: async () => new Response(null),
+        api: { getSession: async () => ({ headers: new Headers(), response: null }) },
+      },
+    })
     class AppBA extends BetterAuthBase {}
 
     const instance: any = new (AppBA as any)();
