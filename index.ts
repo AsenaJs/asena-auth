@@ -3,6 +3,8 @@ export type { SessionCookieOptions } from './lib/AsenaAuthService';
 
 export { Auth } from './lib/decorators';
 
+export * from './lib/guard';
+
 export { MemoryAuthStore } from './lib/store';
 export type { AuthSessionStore, StoredSession } from './lib/store';
 
