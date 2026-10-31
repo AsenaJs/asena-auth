@@ -4,7 +4,7 @@ import { WS_TOKEN_SUBPROTOCOL } from '../types';
 /** The cookie surface of a native provider that the cookie helpers need. */
 export interface SessionCookieSource {
   readonly cookieName: string;
-  readonly cookieOptions: { path?: string; domain?: string };
+  readonly cookieOptions: { path?: string; domain?: string; secure?: boolean; sameSite?: 'strict' | 'lax' | 'none' };
 }
 
 /** The web `Request` behind a context: `ctx.req` on ergenecore, `ctx.req.raw` on hono. */
@@ -45,7 +45,7 @@ export async function applySessionCookie(
 }
 
 export async function clearSessionCookie(ctx: AsenaContext<any, any>, service: SessionCookieSource): Promise<void> {
-  const { path, domain } = service.cookieOptions;
+  const { path, domain, secure, sameSite } = service.cookieOptions;
 
-  await ctx.deleteCookie(service.cookieName, { extraOptions: { path, domain } });
+  await ctx.deleteCookie(service.cookieName, { extraOptions: { path, domain, secure, sameSite } });
 }
