@@ -75,7 +75,7 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
     const stored: StoredSession<TUser> = {
       id: hashToken(token),
       userId: user.id,
-      user,
+      user: structuredClone(user),
       createdAt: now,
       expiresAt: now + this.ttlSeconds * 1000,
     };
@@ -185,7 +185,7 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
 
   private toAuthSession(stored: StoredSession<TUser>): AuthSession<TUser> {
     return {
-      user: stored.user,
+      user: structuredClone(stored.user),
       session: {
         id: stored.id,
         userId: stored.userId,

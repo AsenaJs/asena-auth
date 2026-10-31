@@ -87,6 +87,21 @@ describe('sessions', () => {
     expect(session.session.id).not.toBe(token);
   });
 
+  test('the stored user is a snapshot: mutating the input or a returned session never reaches later requests', async () => {
+    const auth = make(AppAuth);
+    const input = { id: 'u1', roles: ['user'] };
+    const { token, session } = await auth.createSession(input);
+
+    input.roles.push('admin');
+    (session.user as typeof input).roles.push('admin');
+
+    const first = await auth.getSession(bearer(token));
+
+    (first!.user as typeof input).roles.push('admin');
+
+    expect((await auth.getSession(bearer(token)))?.user).toEqual({ id: 'u1', roles: ['user'] });
+  });
+
   test('resolves from a Bearer header and from the session cookie', async () => {
     const auth = make(AppAuth);
     const { token } = await auth.createSession({ id: 'u1' });
