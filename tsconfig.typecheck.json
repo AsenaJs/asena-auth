@@ -30,6 +30,6 @@
     // decorated field (`@Inject() public override foo: Foo`). The overwrite is the point.
     "useDefineForClassFields": false
   },
-  "include": ["index.ts", "lib/**/*.ts", "test/**/*.ts"],
+  "include": ["index.ts", "testing.ts", "lib/**/*.ts", "test/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }

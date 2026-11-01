@@ -3,7 +3,11 @@ import { expect, test } from 'bun:test';
 // @ts-expect-error route-mark plumbing is not part of the public entry
 import type { GuardRouteMark } from '../index';
 
+// @ts-expect-error the test provider lives only in the @asenajs/asena-auth/testing subpath
+import type { TestAuthProvider } from '../index';
+
 export type RemovedGuardRouteMark = GuardRouteMark;
+export type SubpathOnlyTestAuthProvider = TestAuthProvider;
 
 const PUBLIC_VALUES = [
   'AUTH_GUARD_MIDDLEWARE_NAME',
