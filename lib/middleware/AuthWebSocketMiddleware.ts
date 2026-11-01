@@ -7,6 +7,7 @@ import { getRawRequest, withSubprotocolToken } from '../helpers/context';
 import { AUTH_REGISTRY_NAME } from '../types';
 import type { AuthProviderRegistryLike } from '../types';
 import { resolveSession } from './resolveSession';
+import { selectAtBoot } from './selectAtBoot';
 
 /**
  * Rejects a WebSocket upgrade without a session (401, before the upgrade) and puts the session into
@@ -21,12 +22,7 @@ export class AuthWebSocketMiddleware extends AsenaMiddlewareService {
 
   @OnStart()
   public onStart(): void {
-    // authComponents registers this middleware even when unused, and several providers without a primary are valid then.
-    if (this.providerName === undefined && this.registry.providers.size > 1) {
-      return;
-    }
-
-    this.registry.select(this.providerName);
+    selectAtBoot(this.registry, 'AuthWebSocketMiddleware', this.providerName);
   }
 
   public async handle(ctx: AsenaContext<any, any>, next: AsenaNextHandler): Promise<Response | undefined> {

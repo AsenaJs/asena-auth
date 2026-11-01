@@ -8,7 +8,14 @@ import { createErgenecoreAdapter } from '@asenajs/ergenecore';
 import { createHonoAdapter } from '@asenajs/hono-adapter';
 import { betterAuth } from 'better-auth';
 import { memoryAdapter } from 'better-auth/adapters/memory';
-import { BetterAuth, BetterAuthController, BetterAuthService, authComponents } from '../index';
+import {
+  AuthGuard,
+  AuthGuardMiddleware,
+  AuthProviderRegistry,
+  BetterAuth,
+  BetterAuthController,
+  BetterAuthService,
+} from '../index';
 import type { BetterAuthInstance } from '../index';
 
 const expires = new Date(Math.floor(Date.now() / 1000) * 1000 + 86_400_000);
@@ -112,7 +119,7 @@ describe.each(adapters)('Better Auth cookies on $name', ({ name, make }) => {
       adapter: make(),
       logger: silentLogger,
       components: [AttrBA, AttrRoutes, RealBA, CachedBA, RealRoutes, CachedRoutes, RealAuthCtrl],
-      imports: [...authComponents],
+      imports: [AuthGuard, AuthGuardMiddleware, AuthProviderRegistry],
     });
 
   type App = Awaited<ReturnType<typeof boot>>;

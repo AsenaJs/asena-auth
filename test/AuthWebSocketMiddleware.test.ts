@@ -120,6 +120,34 @@ describe('AuthWebSocketMiddleware', () => {
     expect(next).not.toHaveBeenCalled();
   });
 
+  test('onStart fails the boot with every way out when several providers have no primary and none is named', () => {
+    const { middleware, registry } = build();
+    const cause = new Error('none is primary');
+
+    (registry as any).providers = new Map([
+      ['A', stubProvider()],
+      ['B', stubProvider()],
+    ]);
+    registry.select.mockImplementation(() => {
+      throw cause;
+    });
+
+    let error: any;
+
+    try {
+      middleware.onStart();
+    } catch (e) {
+      error = e;
+    }
+
+    expect(error.message).toContain('AuthWebSocketMiddleware');
+    expect(error.message).toContain('(A, B)');
+    expect(error.message).toContain('primary: true');
+    expect(error.message).toContain("protected providerName = 'A'");
+    expect(error.message).toContain('imports: [AuthGuard, AuthGuardMiddleware, AuthProviderRegistry]');
+    expect(error.cause).toBe(cause);
+  });
+
   test('onStart fails the boot when the registry cannot select a provider', () => {
     const { middleware, registry } = build();
 

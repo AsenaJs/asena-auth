@@ -6,6 +6,7 @@ import { getRawRequest } from '../helpers/context';
 import { AUTH_REGISTRY_NAME } from '../types';
 import type { AuthProviderRegistryLike } from '../types';
 import { resolveSession } from './resolveSession';
+import { selectAtBoot } from './selectAtBoot';
 
 /**
  * Resolves the session once, early, into `authSession` (`null` when anonymous) and never rejects -
@@ -20,12 +21,7 @@ export class AuthSessionMiddleware extends AsenaMiddlewareService {
 
   @OnStart()
   public onStart(): void {
-    // authComponents registers this middleware even when unused, and several providers without a primary are valid then.
-    if (this.providerName === undefined && this.registry.providers.size > 1) {
-      return;
-    }
-
-    this.registry.select(this.providerName);
+    selectAtBoot(this.registry, 'AuthSessionMiddleware', this.providerName);
   }
 
   public async handle(ctx: AsenaContext<any, any>, next: AsenaNextHandler): Promise<void> {

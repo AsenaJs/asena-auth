@@ -17,6 +17,9 @@ import { z } from 'zod';
 import {
   AsenaAuthService,
   Auth,
+  AuthGuard,
+  AuthGuardMiddleware,
+  AuthProviderRegistry,
   AuthSessionMiddleware,
   AuthWebSocketMiddleware,
   BetterAuth,
@@ -517,26 +520,13 @@ describe('boot errors (adapter-independent, ergenecore)', () => {
     }
   }
 
-  test('two providers, none primary, only named routes: authComponents boot', async () => {
-    await using app = await createTestApp({
+  const bootError = async (components: any[], imports: readonly any[] = authComponents): Promise<string> => {
+    const error: any = await createTestApp({
       adapter: createErgenecoreAdapter({ logger: silentLogger }),
       logger: silentLogger,
-      components: [First, Second, Named],
-      imports: [...authComponents],
-    });
-
-    expect((await fetch(`${app.baseUrl}/named`)).status).toBe(401);
-  });
-
-  test('two providers, none primary, an unnamed protected route: the boot fails naming the route', async () => {
-    const boot = createTestApp({
-      adapter: createErgenecoreAdapter({ logger: silentLogger }),
-      logger: silentLogger,
-      components: [First, Second, Guarded],
-      imports: [...authComponents],
-    });
-
-    const error: any = await boot.then(
+      components,
+      imports: [...imports],
+    }).then(
       async (app) => {
         await app.stop();
 
@@ -551,6 +541,35 @@ describe('boot errors (adapter-independent, ergenecore)', () => {
       messages.push(String(e.message));
     }
 
-    expect(messages.join(' <- ')).toContain('GET /guarded (Guarded.get)');
+    return messages.join(' <- ');
+  };
+
+  test('two providers, none primary, only named routes: authComponents fails the boot in the middlewares', async () => {
+    const message = await bootError([First, Second, Named]);
+
+    expect(message).toMatch(/Auth(Session|WebSocket)Middleware/);
+    expect(message).toContain('primary: true');
+    expect(message).toContain('providerName');
+    expect(message).toContain('imports: [AuthGuard, AuthGuardMiddleware, AuthProviderRegistry]');
+  });
+
+  test('two providers, none primary: the guard components plus a middleware subclass naming its provider boot', async () => {
+    @Middleware()
+    class FirstSession extends AuthSessionMiddleware {
+      protected providerName = 'First';
+    }
+
+    await using app = await createTestApp({
+      adapter: createErgenecoreAdapter({ logger: silentLogger }),
+      logger: silentLogger,
+      components: [First, Second, Named],
+      imports: [AuthGuard, AuthGuardMiddleware, AuthProviderRegistry, FirstSession],
+    });
+
+    expect((await fetch(`${app.baseUrl}/named`)).status).toBe(401);
+  });
+
+  test('two providers, none primary, an unnamed protected route: the boot fails naming the route', async () => {
+    expect(await bootError([First, Second, Guarded])).toContain('GET /guarded (Guarded.get)');
   });
 });
