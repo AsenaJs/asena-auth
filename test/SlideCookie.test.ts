@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, setSystemTime, test } from 'bun:test';
 import { Protected, Roles, getAuthSession } from '@asenajs/asena/auth';
-import { Config, Controller } from '@asenajs/asena/decorators';
+import { Config, Controller, WebSocket as WebSocketNamespace } from '@asenajs/asena/decorators';
 import { Post } from '@asenajs/asena/decorators/http';
 import { Inject } from '@asenajs/asena/decorators/ioc';
 import { createTestApp, silentLogger } from '@asenajs/asena/test';
+import { AsenaWebSocketService } from '@asenajs/asena/web-socket';
 import { createErgenecoreAdapter } from '@asenajs/ergenecore';
 import { createHonoAdapter } from '@asenajs/hono-adapter';
 import {
@@ -13,8 +14,10 @@ import {
   AuthGuardMiddleware,
   AuthProviderRegistry,
   AuthSessionMiddleware,
+  AuthWebSocketMiddleware,
   hashToken,
 } from '../index';
+import { connect } from './wsClient';
 
 @Auth({ sessionTtl: 100, absoluteTtl: 120 })
 class SlideAuth extends AsenaAuthService {}
@@ -48,6 +51,13 @@ class Slid {
   @Post('/admin')
   admin(ctx: any) {
     return ctx.send({ ok: true });
+  }
+}
+
+@WebSocketNamespace({ path: '/slid-chat', name: 'SlidChat', middlewares: [AuthWebSocketMiddleware] })
+class SlidChat extends AsenaWebSocketService {
+  protected onOpen(ws: any) {
+    ws.send(JSON.stringify({ ok: true }));
   }
 }
 
@@ -145,6 +155,32 @@ describe.each(adapters)('slid session cookie on $name', ({ name, make }) => {
       expect(setCookies).toHaveLength(1);
       expect(setCookies[0]?.value).toBe(token);
       expect(setCookies[0]?.maxAge).toBe(60);
+    });
+
+    test('a WebSocket upgrade whose cookie session slides still opens, and the slide is stored', async () => {
+      await using app = await createTestApp({
+        adapter: make() as any,
+        logger: silentLogger,
+        components: [SlideAuth, SlidChat, ...extra],
+        imports: [AuthProviderRegistry, AuthSessionMiddleware, AuthWebSocketMiddleware],
+      });
+      const auth = await app.resolve<SlideAuth>('SlideAuth');
+      const t0 = Date.now();
+
+      setSystemTime(new Date(t0));
+
+      const { token, session } = await auth.createSession({ id: 'u1' });
+
+      setSystemTime(new Date(t0 + 60_000));
+
+      const ws = await connect(app.wsUrl('/slid-chat'), {
+        headers: { cookie: `asena_session=${token}`, origin: new URL(app.baseUrl).origin },
+      });
+
+      expect(ws.opened).toBe(true);
+      expect((await auth.listUserSessions('u1'))[0]?.session.expiresAt.getTime()).toBe(
+        session.session.createdAt.getTime() + 120_000,
+      );
     });
   });
 });
