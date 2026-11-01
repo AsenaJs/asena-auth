@@ -404,6 +404,110 @@ describe('sessions', () => {
     expect(String((error as Error).cause)).toContain('absoluteTtl (60) is smaller than sessionTtl (3600)');
   });
 
+  describe('csrf: a cross-site state-changing request does not authenticate by cookie', () => {
+    const send = (
+      token: string,
+      { method = 'POST', headers = {} }: { method?: string; headers?: Record<string, string> } = {},
+    ) => new Request(URL_, { method, headers: { cookie: `asena_session=${token}`, ...headers } });
+
+    @Auth({ csrf: { trustedOrigins: ['https://app.example'] } })
+    class Guarded extends AsenaAuthService {}
+
+    const login = async (Cls: new () => AsenaAuthService = Guarded) => {
+      const auth = make(Cls);
+
+      return { auth, token: (await auth.createSession({ id: 'u1' })).token };
+    };
+
+    test('Sec-Fetch-Site decides when present: same-origin and none pass, same-site and cross-site do not', async () => {
+      const { auth, token } = await login();
+
+      for (const site of ['same-origin', 'none']) {
+        expect(await auth.getSession(send(token, { headers: { 'sec-fetch-site': site } }))).not.toBeNull();
+      }
+
+      for (const site of ['same-site', 'cross-site']) {
+        expect(await auth.getSession(send(token, { headers: { 'sec-fetch-site': site } }))).toBeNull();
+      }
+
+      expect(
+        await auth.getSession(
+          send(token, { headers: { 'sec-fetch-site': 'same-origin', origin: 'https://evil.example' } }),
+        ),
+      ).not.toBeNull();
+    });
+
+    test("without Sec-Fetch-Site, Origin must be the request URL's origin; no header at all passes", async () => {
+      const { auth, token } = await login();
+
+      expect(await auth.getSession(send(token, { headers: { origin: 'http://localhost' } }))).not.toBeNull();
+      expect(await auth.getSession(send(token, { headers: { origin: 'https://evil.example' } }))).toBeNull();
+      expect(await auth.getSession(send(token, { headers: { origin: 'null' } }))).toBeNull();
+      expect(await auth.getSession(send(token, { headers: { origin: 'http://localhost:8080' } }))).toBeNull();
+      expect(await auth.getSession(send(token))).not.toBeNull();
+    });
+
+    test('trustedOrigins admits a listed Origin, also with Sec-Fetch-Site same-site or cross-site', async () => {
+      const { auth, token } = await login();
+
+      expect(await auth.getSession(send(token, { headers: { origin: 'https://app.example' } }))).not.toBeNull();
+
+      for (const site of ['same-site', 'cross-site']) {
+        const headers = { 'sec-fetch-site': site, origin: 'https://app.example' };
+
+        expect(await auth.getSession(send(token, { headers }))).not.toBeNull();
+      }
+    });
+
+    test('safe methods are exempt, every other method is checked', async () => {
+      const { auth, token } = await login();
+      const headers = { 'sec-fetch-site': 'cross-site', origin: 'https://evil.example' };
+
+      for (const method of ['GET', 'HEAD', 'OPTIONS']) {
+        expect(await auth.getSession(send(token, { method, headers }))).not.toBeNull();
+      }
+
+      for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+        expect(await auth.getSession(send(token, { method, headers }))).toBeNull();
+      }
+    });
+
+    test('a cross-site WebSocket upgrade (a GET) carrying only the cookie is rejected', async () => {
+      const { auth, token } = await login();
+      const upgrade = { upgrade: 'websocket', connection: 'Upgrade' };
+
+      expect(
+        await auth.getSession(send(token, { method: 'GET', headers: { ...upgrade, origin: 'https://evil.example' } })),
+      ).toBeNull();
+      expect(
+        await auth.getSession(send(token, { method: 'GET', headers: { ...upgrade, origin: 'http://localhost' } })),
+      ).not.toBeNull();
+    });
+
+    test('Bearer requests are exempt: the check applies only to a token read from the cookie', async () => {
+      const { auth, token } = await login();
+      const headers = {
+        authorization: `Bearer ${token}`,
+        'sec-fetch-site': 'cross-site',
+        origin: 'https://evil.example',
+      };
+
+      expect(await auth.getSession(new Request(URL_, { method: 'POST', headers }))).not.toBeNull();
+    });
+
+    test('on by default, and csrf: false disables it', async () => {
+      @Auth({ csrf: false })
+      class Off extends AsenaAuthService {}
+
+      const headers = { 'sec-fetch-site': 'cross-site', origin: 'https://evil.example' };
+      const byDefault = await login(AppAuth as any);
+      const off = await login(Off);
+
+      expect(await byDefault.auth.getSession(send(byDefault.token, { headers }))).toBeNull();
+      expect(await off.auth.getSession(send(off.token, { headers }))).not.toBeNull();
+    });
+  });
+
   test('revokeSession kills one token, revokeUserSessions every token of the user', async () => {
     const auth = make(AppAuth);
     const { token: t1 } = await auth.createSession({ id: 'u1' });

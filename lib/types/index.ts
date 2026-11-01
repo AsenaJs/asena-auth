@@ -58,6 +58,14 @@ export interface AuthOptions<TUser extends AuthUser = AuthUser> {
    * subprotocol token (`Sec-WebSocket-Protocol: bearer, <token>`), which is delivered as that header.
    */
   bearer?: boolean;
+  /**
+   * Cross-site check for cookie sessions, on by default; `false` disables it. A state-changing request
+   * (not GET/HEAD/OPTIONS) or a WebSocket upgrade that carries the token in the cookie and is cross-site
+   * is treated as having no cookie. Cross-site: `Sec-Fetch-Site` other than `same-origin`/`none`, else an
+   * `Origin` that is not the request URL's origin; neither header means a non-browser client and passes.
+   * `trustedOrigins` admits listed `Origin`s. Bearer tokens are exempt. Better Auth has its own handling.
+   */
+  csrf?: { trustedOrigins?: string[] } | false;
   /** Session lifetime in seconds. Default 604800 (7 days). */
   sessionTtl?: number;
   /**

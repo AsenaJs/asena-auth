@@ -76,7 +76,7 @@ const mockBetterAuth: BetterAuthInstance = {
 
 const baRefreshCookie = 'better-auth.session_token=ba-token.sig%2Bx%3D; Max-Age=604800; Path=/; HttpOnly; SameSite=Lax';
 
-@Auth({ primary: true, sessionTtl: 3600 })
+@Auth({ primary: true, sessionTtl: 3600, csrf: { trustedOrigins: ['https://app.example'] } })
 class AppAuth extends AsenaAuthService {
   public override async getSession(request: Request) {
     calls.push('provider');
@@ -368,6 +368,65 @@ describe.each(adapters)('asena-auth end to end on $name', ({ name, make, routes 
 
     expect(anonymous.status).toBe(200);
     expect(anonymous.headers.getSetCookie()[0]).toStartWith('asena_session=;');
+  });
+
+  test('csrf: a cross-site cookie POST is 401 and cannot log out; same-origin, trusted and Bearer POSTs pass', async () => {
+    await using app = await boot();
+    const { token } = await login(app);
+    const cookie = { cookie: `asena_session=${token}` };
+    const evil = { origin: 'https://evil.example', 'sec-fetch-site': 'cross-site' };
+
+    expect((await fetch(`${app.baseUrl}/items`, json({ name: 'x' }, { ...cookie, ...evil }))).status).toBe(401);
+    expect(
+      (await fetch(`${app.baseUrl}/items`, json({ name: 'x' }, { ...cookie, origin: 'https://evil.example' }))).status,
+    ).toBe(401);
+    expect(
+      (await fetch(`${app.baseUrl}/items`, json({ name: 'x' }, { ...cookie, origin: new URL(app.baseUrl).origin })))
+        .status,
+    ).toBe(200);
+    expect(
+      (await fetch(`${app.baseUrl}/items`, json({ name: 'x' }, { ...cookie, 'sec-fetch-site': 'same-origin' }))).status,
+    ).toBe(200);
+    expect(
+      (
+        await fetch(
+          `${app.baseUrl}/items`,
+          json({ name: 'x' }, { ...cookie, origin: 'https://app.example', 'sec-fetch-site': 'cross-site' }),
+        )
+      ).status,
+    ).toBe(200);
+    expect((await fetch(`${app.baseUrl}/items`, json({ name: 'x' }, { ...bearer(token), ...evil }))).status).toBe(200);
+    expect((await fetch(`${app.baseUrl}/me`, { headers: { ...cookie, ...evil } })).status).toBe(200);
+
+    await fetch(`${app.baseUrl}/auth/logout`, { method: 'POST', headers: { ...cookie, ...evil } });
+
+    expect((await fetch(`${app.baseUrl}/me`, { headers: cookie })).status).toBe(200);
+  });
+
+  test('csrf: a cross-site WebSocket upgrade with only the cookie never opens; a same-origin one does', async () => {
+    await using app = await boot();
+    const { token } = await login(app);
+    const cookie = `asena_session=${token}`;
+
+    expect(
+      await connect(app.wsUrl('/chat'), {
+        headers: { cookie, origin: 'https://evil.example', 'sec-fetch-site': 'cross-site' },
+      }),
+    ).toEqual({ opened: false });
+    expect(await connect(app.wsUrl('/chat'), { headers: { cookie, origin: 'https://evil.example' } })).toEqual({
+      opened: false,
+    });
+
+    const sameOrigin = await connect(app.wsUrl('/chat'), { headers: { cookie, origin: new URL(app.baseUrl).origin } });
+
+    expect(sameOrigin.opened).toBe(true);
+
+    const viaProtocol = await connect(app.wsUrl('/chat'), {
+      headers: { cookie, origin: 'https://evil.example' },
+      protocols: ['bearer', token],
+    });
+
+    expect(viaProtocol.opened).toBe(true);
   });
 
   test('order: the guard rejects before the route middleware and the validator ever run', async () => {

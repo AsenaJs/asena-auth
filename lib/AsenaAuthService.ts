@@ -10,6 +10,7 @@ import type { AuthOptions } from './types';
 const DEFAULT_TTL_SECONDS = 604_800;
 const DEFAULT_ABSOLUTE_TTL_SECONDS = 2_592_000;
 const DEFAULT_COOKIE_NAME = 'asena_session';
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 // Providers may share one store object; it starts with the first and stops with the last.
 const storeUsers = new WeakMap<AuthSessionStore<any>, { users: number; started: Promise<void> }>();
@@ -139,13 +140,13 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
   }
 
   public async getSession(request: Request): Promise<AuthSession<TUser> | null> {
-    const bearerToken = this.readBearer(request);
-    const token = bearerToken ?? this.readCookie(request.headers.get('cookie'));
+    const read = this.readToken(request);
 
-    if (!token) {
+    if (!read) {
       return null;
     }
 
+    const { token, fromCookie } = read;
     const store = this.getStore();
     const stored = await store.get(hashToken(token));
     const now = Date.now();
@@ -160,7 +161,7 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
     if (this.getOptions().sliding !== false && stored.expiresAt - now < ttlMs / 2 && expiresAt > stored.expiresAt) {
       await store.touch(stored.id, expiresAt);
 
-      if (!bearerToken) {
+      if (fromCookie) {
         this.slidCookies.set(request, token);
       }
 
@@ -198,11 +199,10 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
    * and clears the session cookie. Without a session it only clears the cookie.
    */
   public async logout(ctx: AsenaContext<any, any>): Promise<void> {
-    const request = getRawRequest(ctx);
-    const token = this.readBearer(request) ?? this.readCookie(request.headers.get('cookie'));
+    const read = this.readToken(getRawRequest(ctx));
 
-    if (token) {
-      await this.revokeSession(token);
+    if (read) {
+      await this.revokeSession(read.token);
     }
 
     await clearSessionCookie(ctx, this);
@@ -256,6 +256,41 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
 
   private isLive(stored: StoredSession<TUser>, now: number): boolean {
     return stored.expiresAt > now && this.absoluteEnd(stored) > now;
+  }
+
+  private readToken(request: Request): { token: string; fromCookie: boolean } | null {
+    const bearer = this.readBearer(request);
+
+    if (bearer) {
+      return { token: bearer, fromCookie: false };
+    }
+
+    const cookie = this.readCookie(request.headers.get('cookie'));
+
+    return cookie && !this.isCrossSite(request) ? { token: cookie, fromCookie: true } : null;
+  }
+
+  private isCrossSite(request: Request): boolean {
+    const csrf = this.getOptions().csrf;
+    const upgrade = request.headers.get('upgrade')?.toLowerCase() === 'websocket';
+
+    if (csrf === false || (SAFE_METHODS.has(request.method) && !upgrade)) {
+      return false;
+    }
+
+    const origin = request.headers.get('origin');
+
+    if (origin !== null && csrf?.trustedOrigins?.includes(origin)) {
+      return false;
+    }
+
+    const site = request.headers.get('sec-fetch-site');
+
+    if (site !== null) {
+      return site !== 'same-origin' && site !== 'none';
+    }
+
+    return origin !== null && origin !== new URL(request.url).origin;
   }
 
   private readBearer(request: Request): string | null {
