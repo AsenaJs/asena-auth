@@ -3,15 +3,15 @@ import { AUTH_SESSION_CONTEXT_KEY } from '@asenajs/asena/auth';
 import type { AsenaAuthProvider, AuthSession } from '@asenajs/asena/auth';
 import { AsenaAuthService } from '../AsenaAuthService';
 import { BetterAuthService } from '../better-auth/BetterAuthService';
-import { applySessionCookie, forwardSetCookies, getRawRequest } from '../helpers/context';
+import { forwardSetCookies, getRawRequest } from '../helpers/context';
 
 const resolvedBy = new WeakMap<Request, AsenaAuthProvider>();
 
 /**
  * The request's session, asking `provider` at most once per request: a value already in the
  * context (`null` = resolved anonymous) is returned as is, unless another provider resolved it.
- * A native cookie session that slid gets its cookie re-issued, and the cookies Better Auth answered
- * with (a session refresh) are forwarded. Pass `reuse: false` when `request`
+ * The cookies Better Auth answered with (a session refresh) are forwarded; a native slide is re-issued
+ * later by {@link flushSlidCookie}. Pass `reuse: false` when `request`
  * carries credentials the earlier resolution did not see, to ask again whatever the context holds.
  */
 export async function resolveSession(
@@ -34,15 +34,16 @@ export async function resolveSession(
   ctx.setValue(AUTH_SESSION_CONTEXT_KEY, session);
   resolvedBy.set(raw, provider);
 
-  if (provider instanceof AsenaAuthService) {
-    const slidToken = provider.slidCookieToken(request);
-
-    if (slidToken) {
-      await applySessionCookie(ctx, provider, slidToken);
-    }
-  } else if (provider instanceof BetterAuthService) {
+  if (provider instanceof BetterAuthService) {
     await forwardSetCookies(ctx, provider.responseCookies(request));
   }
 
   return session;
+}
+
+/** Re-issues the cookie a native provider slid in `resolveSession`; run it after the handler. */
+export async function flushSlidCookie(ctx: AsenaContext<any, any>, provider: AsenaAuthProvider): Promise<void> {
+  if (provider instanceof AsenaAuthService) {
+    await provider.flushSlidCookie(ctx);
+  }
 }

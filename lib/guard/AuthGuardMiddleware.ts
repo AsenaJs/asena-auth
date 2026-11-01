@@ -6,7 +6,7 @@ import { ICoreServiceNames } from '@asenajs/asena/ioc/types';
 import type { ServerLogger } from '@asenajs/asena/logger';
 import { AsenaMiddlewareService } from '@asenajs/asena/middleware';
 import { getRawRequest } from '../helpers/context';
-import { resolveSession } from '../middleware/resolveSession';
+import { flushSlidCookie, resolveSession } from '../middleware/resolveSession';
 import { AUTH_GUARD_MIDDLEWARE_NAME, AUTH_GUARD_NAME, AUTH_REGISTRY_NAME } from '../types';
 import type { AuthProviderRegistryLike } from '../types';
 import type { AuthGuard } from './AuthGuard';
@@ -43,14 +43,18 @@ export class AuthGuardMiddleware extends AsenaMiddlewareService {
       throw new HttpException(401, 'Unauthorized', { headers: { 'WWW-Authenticate': 'Bearer' } });
     }
 
-    if (mark.roles?.length) {
-      const held = provider.getRoles(session);
+    try {
+      if (mark.roles?.length) {
+        const held = provider.getRoles(session);
 
-      if (!mark.roles.some((role) => held.includes(role))) {
-        throw new HttpException(403, 'Forbidden');
+        if (!mark.roles.some((role) => held.includes(role))) {
+          throw new HttpException(403, 'Forbidden');
+        }
       }
-    }
 
-    await next();
+      await next();
+    } finally {
+      await flushSlidCookie(ctx, provider);
+    }
   }
 }

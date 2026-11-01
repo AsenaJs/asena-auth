@@ -5,7 +5,7 @@ import { AsenaMiddlewareService } from '@asenajs/asena/middleware';
 import { getRawRequest } from '../helpers/context';
 import { AUTH_REGISTRY_NAME } from '../types';
 import type { AuthProviderRegistryLike } from '../types';
-import { resolveSession } from './resolveSession';
+import { flushSlidCookie, resolveSession } from './resolveSession';
 import { selectAtBoot } from './selectAtBoot';
 
 /**
@@ -25,7 +25,14 @@ export class AuthSessionMiddleware extends AsenaMiddlewareService {
   }
 
   public async handle(ctx: AsenaContext<any, any>, next: AsenaNextHandler): Promise<void> {
-    await resolveSession(ctx, this.registry.select(this.providerName), getRawRequest(ctx));
-    await next();
+    const provider = this.registry.select(this.providerName);
+
+    await resolveSession(ctx, provider, getRawRequest(ctx));
+
+    try {
+      await next();
+    } finally {
+      await flushSlidCookie(ctx, provider);
+    }
   }
 }

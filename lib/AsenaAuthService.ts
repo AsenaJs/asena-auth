@@ -35,7 +35,7 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
 
   private startedStore: AuthSessionStore<TUser> | null = null;
 
-  private readonly slidCookies = new WeakMap<Request, string>();
+  private readonly slidCookies = new WeakMap<Request, { token: string; maxAge: number }>();
 
   @OnStart()
   public async onStart(): Promise<void> {
@@ -144,11 +144,20 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
   }
 
   /**
-   * The cookie token whose session `getSession(request)` slid, so the caller can re-issue the cookie; else `null`.
+   * Re-issues, once, the cookie of a session `getSession` slid for this request, its `Max-Age` capped at the
+   * session's remaining lifetime. Called after the handler, so `logout` and `rotateSession` can cancel it.
    * @internal
    */
-  public slidCookieToken(request: Request): string | null {
-    return this.slidCookies.get(request) ?? null;
+  public async flushSlidCookie(ctx: AsenaContext<any, any>): Promise<void> {
+    const request = getRawRequest(ctx);
+    const slid = this.slidCookies.get(request);
+
+    if (!slid) {
+      return;
+    }
+
+    this.slidCookies.delete(request);
+    await ctx.setCookie(this.cookieName, slid.token, { extraOptions: { ...this.cookieOptions, maxAge: slid.maxAge } });
   }
 
   public getRoles(session: AuthSession<TUser>): string[] {
@@ -171,7 +180,10 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
    * and clears the session cookie. Without a session it only clears the cookie.
    */
   public async logout(ctx: AsenaContext<any, any>): Promise<void> {
-    const read = this.readToken(getRawRequest(ctx));
+    const request = getRawRequest(ctx);
+    const read = this.readToken(request);
+
+    this.slidCookies.delete(request);
 
     if (read) {
       await this.revokeSession(read.token);
@@ -198,6 +210,7 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
     const { token } = await this.createSession(user ?? current.stored.user);
 
     await this.revokeSessionById(current.stored.id);
+    this.slidCookies.delete(request);
 
     if (read.fromCookie) {
       await applySessionCookie(ctx, this, token);
@@ -280,7 +293,7 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
       await store.touch(stored.id, expiresAt);
 
       if (fromCookie) {
-        this.slidCookies.set(request, token);
+        this.slidCookies.set(request, { token, maxAge: Math.floor((expiresAt - now) / 1000) });
       }
 
       return { stored, session: this.toAuthSession({ ...stored, expiresAt }, loaded) };

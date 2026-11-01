@@ -256,31 +256,61 @@ describe('sessions', () => {
     expect(session.session.expiresAt.getTime()).toBe(later + 10_000);
   });
 
-  test('sliding: a cookie-carried slide reports the token so the cookie can be re-issued; Bearer does not', async () => {
-    @Auth({ sessionTtl: 10 })
+  test('sliding: a cookie-carried slide re-issues the cookie once, on flush; Bearer does not', async () => {
+    @Auth({ sessionTtl: 10, absoluteTtl: false })
     class Sliding extends AsenaAuthService {}
 
     const auth = make(Sliding);
     const { token } = await auth.createSession({ id: 'u1' });
+    const flushed = async (request: Request) => {
+      const ctx = { req: request, setCookie: mock(async (..._args: unknown[]) => {}) };
 
-    const early = cookie(token);
+      await auth.getSession(request);
+      await auth.flushSlidCookie(ctx as any);
+      await auth.flushSlidCookie(ctx as any);
 
-    await auth.getSession(early);
-    expect(auth.slidCookieToken(early)).toBeNull();
+      return ctx.setCookie.mock.calls;
+    };
+
+    expect(await flushed(cookie(token))).toEqual([]);
 
     setSystemTime(new Date(Date.now() + 6_000));
 
-    const viaBearer = bearer(token);
-
-    await auth.getSession(viaBearer);
-    expect(auth.slidCookieToken(viaBearer)).toBeNull();
+    expect(await flushed(bearer(token))).toEqual([]);
 
     setSystemTime(new Date(Date.now() + 6_000));
 
-    const viaCookie = cookie(token);
+    expect(await flushed(cookie(token))).toEqual([
+      ['asena_session', token, { extraOptions: { ...auth.cookieOptions, maxAge: 10 } }],
+    ]);
+  });
 
-    await auth.getSession(viaCookie);
-    expect(auth.slidCookieToken(viaCookie)).toBe(token);
+  test('absoluteTtl: a slid cookie never outlives the cap, and the store row never passes it either', async () => {
+    const store = new MemoryAuthStore();
+
+    @Auth({ sessionTtl: 10, absoluteTtl: 15, store })
+    class Capped extends AsenaAuthService {}
+
+    const auth = make(Capped);
+    const { token, session } = await auth.createSession({ id: 'u1' });
+    const createdAt = session.session.createdAt.getTime();
+    const ctx = { req: cookie(token), setCookie: mock(async () => {}) };
+
+    setSystemTime(new Date(createdAt + 6_000));
+    await auth.getSession(ctx.req);
+    await auth.flushSlidCookie(ctx as any);
+
+    expect(ctx.setCookie).toHaveBeenCalledWith('asena_session', token, {
+      extraOptions: { ...auth.cookieOptions, maxAge: 9 },
+    });
+    expect((await store.get(session.session.id))?.expiresAt).toBe(createdAt + 15_000);
+
+    setSystemTime(new Date(createdAt + 14_000));
+    expect(await auth.getSession(cookie(token))).not.toBeNull();
+    expect((await store.get(session.session.id))?.expiresAt).toBe(createdAt + 15_000);
+
+    setSystemTime(new Date(createdAt + 15_000));
+    expect(await store.get(session.session.id)).toBeNull();
   });
 
   test('sliding: false never refreshes', async () => {

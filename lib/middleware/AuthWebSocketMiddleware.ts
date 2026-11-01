@@ -6,7 +6,7 @@ import { AsenaMiddlewareService } from '@asenajs/asena/middleware';
 import { getRawRequest, withSubprotocolToken } from '../helpers/context';
 import { AUTH_REGISTRY_NAME } from '../types';
 import type { AuthProviderRegistryLike } from '../types';
-import { resolveSession } from './resolveSession';
+import { flushSlidCookie, resolveSession } from './resolveSession';
 import { selectAtBoot } from './selectAtBoot';
 
 /**
@@ -29,7 +29,8 @@ export class AuthWebSocketMiddleware extends AsenaMiddlewareService {
     const raw = getRawRequest(ctx);
     const request = withSubprotocolToken(raw);
     // A global session middleware saw the upgrade without the subprotocol token; its verdict is not final.
-    const session = await resolveSession(ctx, this.registry.select(this.providerName), request, request === raw);
+    const provider = this.registry.select(this.providerName);
+    const session = await resolveSession(ctx, provider, request, request === raw);
 
     if (!session) {
       return new Response(null, { status: 401 });
@@ -37,7 +38,12 @@ export class AuthWebSocketMiddleware extends AsenaMiddlewareService {
 
     // Both adapters replace the socket value on every write, so keep what earlier middlewares stored.
     ctx.setWebSocketValue({ ...(ctx.getWebSocketValue() ?? {}), [AUTH_SESSION_CONTEXT_KEY]: session });
-    await next();
+
+    try {
+      await next();
+    } finally {
+      await flushSlidCookie(ctx, provider);
+    }
 
     return undefined;
   }
