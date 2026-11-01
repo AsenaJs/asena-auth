@@ -105,7 +105,7 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
     const stored: StoredSession<TUser> = {
       id: hashToken(token),
       userId: user.id,
-      user: structuredClone(user),
+      user: this.snapshot(user),
       createdAt: now,
       expiresAt: now + this.ttlSeconds * 1000,
     };
@@ -211,6 +211,18 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
     }
 
     return null;
+  }
+
+  private snapshot(user: TUser): TUser {
+    try {
+      return structuredClone(user);
+    } catch (cause) {
+      throw new TypeError(
+        `${this.constructor.name}.createSession: the user must be plain data (structuredClone failed; ` +
+          'functions and symbols cannot be stored, class instances lose their prototype).',
+        { cause },
+      );
+    }
   }
 
   private toAuthSession(stored: StoredSession<TUser>): AuthSession<TUser> {

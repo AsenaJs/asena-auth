@@ -4,7 +4,10 @@ export interface StoredSession<TUser = AuthUser> {
   /** `sha256(token)` hex - the raw token is never stored. */
   id: string;
   userId: string;
-  /** Snapshot taken at `createSession` time with `structuredClone`, so it must be plain data (no functions). */
+  /**
+   * Snapshot taken at `createSession` time with `structuredClone`, so it must be plain data: a function
+   * makes `createSession` throw a `TypeError`, a class instance comes back as a plain object.
+   */
   user: TUser;
   /** Epoch milliseconds. */
   createdAt: number;

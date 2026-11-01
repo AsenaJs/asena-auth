@@ -104,6 +104,50 @@ describe('sessions', () => {
     expect((await auth.getSession(bearer(token)))?.user).toEqual({ id: 'u1', roles: ['user'] });
   });
 
+  test('a user carrying a function cannot be stored: createSession names the cause and stores nothing', async () => {
+    const store = new MemoryAuthStore();
+
+    @Auth({ store })
+    class Cloning extends AsenaAuthService {}
+
+    const auth = make(Cloning);
+    const error = await auth.createSession({ id: 'u1', can: () => true } as any).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(TypeError);
+    expect((error as Error).message).toContain('Cloning.createSession');
+    expect((error as Error).message).toContain('plain data');
+    expect(((error as Error).cause as Error).name).toBe('DataCloneError');
+    expect(store.size).toBe(0);
+  });
+
+  test('the stored user is data only: a class instance comes back as a plain object, Date and Map survive', async () => {
+    class Profile {
+      public constructor(public readonly name: string) {}
+
+      public greet(): string {
+        return `hi ${this.name}`;
+      }
+    }
+
+    const auth = make(AppAuth);
+    const since = new Date('2026-01-02T03:04:05Z');
+    const { token } = await auth.createSession({
+      id: 'u1',
+      profile: new Profile('Ada'),
+      since,
+      flags: new Map([['beta', true]]),
+    } as any);
+    const user = (await auth.getSession(bearer(token)))!.user as any;
+
+    expect(user.profile).not.toBeInstanceOf(Profile);
+    expect(Object.getPrototypeOf(user.profile)).toBe(Object.prototype);
+    expect(user.profile).toEqual({ name: 'Ada' });
+    expect(user.since).toBeInstanceOf(Date);
+    expect(user.since.getTime()).toBe(since.getTime());
+    expect(user.flags).toBeInstanceOf(Map);
+    expect(user.flags.get('beta')).toBe(true);
+  });
+
   test('resolves from a Bearer header and from the session cookie', async () => {
     const auth = make(AppAuth);
     const { token } = await auth.createSession({ id: 'u1' });
