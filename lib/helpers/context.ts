@@ -5,6 +5,8 @@ import { WS_TOKEN_SUBPROTOCOL } from '../types';
 export interface SessionCookieSource {
   readonly cookieName: string;
   readonly cookieOptions: { path?: string; domain?: string; secure?: boolean; sameSite?: 'strict' | 'lax' | 'none' };
+  /** @internal Drops the slid cookie pending for this request, so the cookie the helper writes wins. */
+  discardSlidCookie?(ctx: AsenaContext<any, any>): void;
 }
 
 /** The web `Request` behind a context: `ctx.req` on ergenecore, `ctx.req.raw` on hono. */
@@ -41,6 +43,7 @@ export async function applySessionCookie(
   service: SessionCookieSource,
   token: string,
 ): Promise<void> {
+  service.discardSlidCookie?.(ctx);
   await ctx.setCookie(service.cookieName, token, { extraOptions: service.cookieOptions });
 }
 
@@ -58,5 +61,6 @@ export async function forwardSetCookies(ctx: AsenaContext<any, any>, setCookies:
 export async function clearSessionCookie(ctx: AsenaContext<any, any>, service: SessionCookieSource): Promise<void> {
   const { path, domain, secure, sameSite } = service.cookieOptions;
 
+  service.discardSlidCookie?.(ctx);
   await ctx.deleteCookie(service.cookieName, { extraOptions: { path, domain, secure, sameSite } });
 }

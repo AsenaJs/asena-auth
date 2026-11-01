@@ -15,6 +15,8 @@ import {
   AuthProviderRegistry,
   AuthSessionMiddleware,
   AuthWebSocketMiddleware,
+  applySessionCookie,
+  clearSessionCookie,
   hashToken,
 } from '../index';
 import { connect } from './wsClient';
@@ -45,6 +47,22 @@ class Slid {
     const token = await this.auth.rotateSession(ctx);
 
     return ctx.send({ token, sessionId: getAuthSession(ctx)?.session.id });
+  }
+
+  @Post('/login')
+  async login(ctx: any) {
+    const { token } = await this.auth.createSession({ id: 'u2', roles: ['user'] });
+
+    await applySessionCookie(ctx, this.auth, token);
+
+    return ctx.send({ token });
+  }
+
+  @Post('/clear')
+  async clear(ctx: any) {
+    await clearSessionCookie(ctx, this.auth);
+
+    return ctx.send({ ok: true });
   }
 
   @Roles('admin')
@@ -137,6 +155,26 @@ describe.each(adapters)('slid session cookie on $name', ({ name, make }) => {
       expect(setCookies).toHaveLength(1);
       expect(setCookies[0]?.value).toBe(next);
       expect(sessionId).toBe(hashToken(next));
+    });
+
+    test('a handler that logs in another user in a slid request answers with its new cookie only', async () => {
+      await using app = await boot();
+      const { res, token, setCookies } = await slidRequest(app, 'login', 60);
+      const { token: next } = (await res.json()) as { token: string };
+
+      expect(next).not.toBe(token);
+      expect(setCookies).toHaveLength(1);
+      expect(setCookies[0]?.value).toBe(next);
+    });
+
+    test('clearSessionCookie in a slid request answers with the deletion cookie only', async () => {
+      await using app = await boot();
+      const { res, setCookies } = await slidRequest(app, 'clear', 60);
+
+      expect(res.status).toBe(200);
+      expect(setCookies).toHaveLength(1);
+      expect(setCookies[0]?.name).toBe('asena_session');
+      expect(setCookies[0]?.value).toBe('');
     });
 
     test('a slid request the guard answers 403 still carries the re-issued cookie', async () => {

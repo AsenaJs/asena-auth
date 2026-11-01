@@ -146,7 +146,7 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
 
   /**
    * Re-issues, once, the cookie of a session `getSession` slid for this request, its `Max-Age` capped at the
-   * session's remaining lifetime. Called after the handler, so `logout` and `rotateSession` can cancel it.
+   * session's remaining lifetime. Called after the handler, so a cookie the handler writes or clears wins.
    * @internal
    */
   public async flushSlidCookie(ctx: AsenaContext<any, any>): Promise<void> {
@@ -159,6 +159,11 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
 
     this.slidCookies.delete(request);
     await ctx.setCookie(this.cookieName, slid.token, { extraOptions: { ...this.cookieOptions, maxAge: slid.maxAge } });
+  }
+
+  /** @internal */
+  public discardSlidCookie(ctx: AsenaContext<any, any>): void {
+    this.slidCookies.delete(getRawRequest(ctx));
   }
 
   public getRoles(session: AuthSession<TUser>): string[] {
