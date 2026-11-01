@@ -435,6 +435,21 @@ describe('sessions', () => {
     expect(String((error as Error).cause)).toContain('absoluteTtl (60) is smaller than sessionTtl (3600)');
   });
 
+  test('an app whose boot fails on absoluteTtl < sessionTtl exits printing the reason under the core wrapper', async () => {
+    const proc = Bun.spawn([process.execPath, new URL('./fixtures/invertedTtlBoot.ts', import.meta.url).pathname], {
+      cwd: new URL('..', import.meta.url).pathname,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const [stderr, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+
+    expect(code).not.toBe(0);
+    expect(stderr).toContain("@OnStart hook 'Inverted.onStart()' failed");
+    expect(stderr).toContain(
+      'Inverted: absoluteTtl (60) is smaller than sessionTtl (3600). Raise absoluteTtl, lower sessionTtl, or set absoluteTtl: false.',
+    );
+  });
+
   describe('csrf: a cross-site state-changing request does not authenticate by cookie', () => {
     const send = (
       token: string,
