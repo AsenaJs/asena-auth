@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, mock, setSystemTime, spyOn, test } from 'bun:test';
-import { AUTH_PROVIDER_KEY } from '@asenajs/asena/auth';
+import { AUTH_PROVIDER_KEY, AUTH_SESSION_CONTEXT_KEY, getAuthSession } from '@asenajs/asena/auth';
 import type { AuthSession } from '@asenajs/asena/auth';
 import { ComponentConstants } from '@asenajs/asena/ioc/constants';
 import { createTestApp, silentLogger } from '@asenajs/asena/test';
@@ -7,6 +7,7 @@ import { getOwnTypedMetadata, getTypedMetadata } from '@asenajs/asena/utils';
 import { createErgenecoreAdapter } from '@asenajs/ergenecore';
 import { AsenaAuthService } from '../lib/AsenaAuthService';
 import { Auth } from '../lib/decorators';
+import { hashToken } from '../lib/crypto';
 import { withSubprotocolToken } from '../lib/helpers';
 import { MemoryAuthStore } from '../lib/store';
 
@@ -609,7 +610,51 @@ describe('sessions', () => {
   });
 
   describe('rotateSession', () => {
-    const ctxFor = (request: Request) => ({ req: request, setCookie: mock(async () => {}) });
+    const ctxFor = (request: Request) => {
+      const values = new Map<string, unknown>();
+
+      return {
+        req: request,
+        setCookie: mock(async () => {}),
+        getValue: (key: string) => values.get(key),
+        setValue: (key: string, value: unknown) => values.set(key, value),
+      };
+    };
+
+    test.each([
+      ['without a user, the current user', undefined, { id: 'u1', roles: ['user'] }],
+      ['with a user, that user', { id: 'u1', roles: ['admin'] }, { id: 'u1', roles: ['admin'] }],
+    ])('getAuthSession later in the same request returns the new session (%s)', async (_case, user, expected) => {
+      const auth = make(AppAuth);
+      const { token } = await auth.createSession({ id: 'u1', roles: ['user'] });
+      const ctx = ctxFor(bearer(token));
+
+      ctx.setValue(AUTH_SESSION_CONTEXT_KEY, await auth.getSession(ctx.req));
+
+      const next = await auth.rotateSession(ctx as any, user);
+      const current = getAuthSession(ctx as any);
+
+      expect(current?.session.id).toBe(hashToken(next));
+      expect(current?.user).toEqual(expected);
+      expect(current).toEqual(await auth.getSession(bearer(next)));
+    });
+
+    test('with loadUser, the same-request session carries the loaded user, as the next request would', async () => {
+      class Row {
+        public constructor(public readonly id: string) {}
+      }
+
+      @Auth({ loadUser: async (id) => new Row(id) as any })
+      class Orm extends AsenaAuthService {}
+
+      const auth = make(Orm);
+      const { token } = await auth.createSession({ id: 'u1' });
+      const ctx = ctxFor(bearer(token));
+
+      await auth.rotateSession(ctx as any);
+
+      expect(getAuthSession(ctx as any)?.user).toBeInstanceOf(Row);
+    });
 
     test('replaces the current session: the old token stops working, the new one is a fresh session', async () => {
       @Auth({ sessionTtl: 60, absoluteTtl: 100 })

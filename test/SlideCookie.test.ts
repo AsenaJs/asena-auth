@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, setSystemTime, test } from 'bun:test';
-import { Protected, Roles } from '@asenajs/asena/auth';
+import { Protected, Roles, getAuthSession } from '@asenajs/asena/auth';
 import { Config, Controller } from '@asenajs/asena/decorators';
 import { Post } from '@asenajs/asena/decorators/http';
 import { Inject } from '@asenajs/asena/decorators/ioc';
@@ -13,6 +13,7 @@ import {
   AuthGuardMiddleware,
   AuthProviderRegistry,
   AuthSessionMiddleware,
+  hashToken,
 } from '../index';
 
 @Auth({ sessionTtl: 100, absoluteTtl: 120 })
@@ -38,7 +39,9 @@ class Slid {
 
   @Post('/rotate')
   async rotate(ctx: any) {
-    return ctx.send({ token: await this.auth.rotateSession(ctx) });
+    const token = await this.auth.rotateSession(ctx);
+
+    return ctx.send({ token, sessionId: getAuthSession(ctx)?.session.id });
   }
 
   @Roles('admin')
@@ -118,11 +121,12 @@ describe.each(adapters)('slid session cookie on $name', ({ name, make }) => {
     test('rotateSession in a request that slid answers with the new cookie only', async () => {
       await using app = await boot();
       const { res, token, setCookies } = await slidRequest(app, 'rotate', 60);
-      const { token: next } = (await res.json()) as { token: string };
+      const { token: next, sessionId } = (await res.json()) as { token: string; sessionId: string };
 
       expect(next).not.toBe(token);
       expect(setCookies).toHaveLength(1);
       expect(setCookies[0]?.value).toBe(next);
+      expect(sessionId).toBe(hashToken(next));
     });
 
     test('a slid request the guard answers 403 still carries the re-issued cookie', async () => {
