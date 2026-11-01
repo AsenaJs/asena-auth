@@ -82,7 +82,7 @@
   },
   "peerDependencies": {
     "@asenajs/asena": "^0.12.2",
-    "better-auth": ">=1.2.0",
+    "better-auth": ">=1.2.0 <2",
     "reflect-metadata": "^0.2.2",
     "typescript": "^5.9.3"
   },
