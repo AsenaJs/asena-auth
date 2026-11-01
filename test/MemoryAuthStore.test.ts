@@ -72,7 +72,7 @@ describe('MemoryAuthStore', () => {
   });
 
   test('the sweep removes an expired row without anyone calling get', async () => {
-    const store = new MemoryAuthStore(20);
+    const store = new MemoryAuthStore(0.02);
 
     store.onStart();
 
@@ -88,7 +88,7 @@ describe('MemoryAuthStore', () => {
   });
 
   test('no sweep runs before onStart or after onStop', async () => {
-    const store = new MemoryAuthStore(10);
+    const store = new MemoryAuthStore(0.01);
 
     await store.create(row('short', 'u1', 1));
     await Bun.sleep(40);

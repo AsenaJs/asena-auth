@@ -25,7 +25,7 @@ export function Auth(options: AuthDecoratorOptions | (() => AuthOptions)) {
         const resolved = typeof options === 'function' ? options() : options;
 
         this.setAuthOptions(resolved);
-        this.setStore(resolved.store ?? new MemoryAuthStore(resolved.sweepIntervalMs));
+        this.setStore(resolved.store ?? new MemoryAuthStore(resolved.sweepInterval));
       }
     }
 

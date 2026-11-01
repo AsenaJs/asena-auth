@@ -7,6 +7,7 @@ import { getOwnTypedMetadata, getTypedMetadata } from '@asenajs/asena/utils';
 import { createErgenecoreAdapter } from '@asenajs/ergenecore';
 import { AsenaAuthService } from '../lib/AsenaAuthService';
 import { Auth } from '../lib/decorators';
+import { withSubprotocolToken } from '../lib/helpers';
 import { MemoryAuthStore } from '../lib/store';
 
 const URL_ = 'http://localhost/me';
@@ -192,14 +193,19 @@ describe('sessions', () => {
     expect(await auth.getSession(new Request(URL_))).toBeNull();
   });
 
-  test('header: false ignores Bearer tokens', async () => {
-    @Auth({ header: false })
+  test('bearer: false ignores Bearer tokens', async () => {
+    @Auth({ bearer: false })
     class CookieOnly extends AsenaAuthService {}
 
     const auth = make(CookieOnly);
     const { token } = await auth.createSession({ id: 'u1' });
 
     expect(await auth.getSession(bearer(token))).toBeNull();
+    expect(
+      await auth.getSession(
+        withSubprotocolToken(new Request(URL_, { headers: { 'sec-websocket-protocol': `bearer, ${token}` } })),
+      ),
+    ).toBeNull();
     expect((await auth.getSession(cookie(token)))?.user.id).toBe('u1');
   });
 
@@ -392,6 +398,23 @@ describe('sessions', () => {
 
     expect(start).toHaveBeenCalledTimes(1);
     expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  test('sweepInterval is in seconds: the default MemoryAuthStore sweeps every sweepInterval * 1000 ms', async () => {
+    @Auth({ sweepInterval: 2 })
+    class Sweeping extends AsenaAuthService {}
+
+    const auth = make(Sweeping);
+    const interval = spyOn(globalThis, 'setInterval');
+
+    try {
+      await auth.onStart();
+      expect(interval).toHaveBeenCalledTimes(1);
+      expect(interval.mock.calls[0]?.[1]).toBe(2_000);
+    } finally {
+      interval.mockRestore();
+      await auth.onStop();
+    }
   });
 
   test('through the container a supplied store starts and stops once', async () => {

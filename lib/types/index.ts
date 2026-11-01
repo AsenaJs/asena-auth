@@ -53,8 +53,11 @@ export interface AuthOptions<TUser extends AuthUser = AuthUser> {
   /** Replaces the default resolver (`user.roles` array, else comma-split `user.role`). */
   roles?: RolesResolver<TUser>;
   cookie?: CookieOptions;
-  /** Accept `Authorization: Bearer <token>`. Default `true`. */
-  header?: boolean;
+  /**
+   * Accept `Authorization: Bearer <token>`. Default `true`. `false` also disables the WebSocket
+   * subprotocol token (`Sec-WebSocket-Protocol: bearer, <token>`), which is delivered as that header.
+   */
+  bearer?: boolean;
   /** Session lifetime in seconds. Default 604800 (7 days). */
   sessionTtl?: number;
   /** Extend the session when less than half of its lifetime is left. Default `true`. */
@@ -64,8 +67,8 @@ export interface AuthOptions<TUser extends AuthUser = AuthUser> {
   hashing?: HashingOptions;
   /** Defaults to a `MemoryAuthStore`. */
   store?: AuthSessionStore<TUser>;
-  /** Sweep interval of the default `MemoryAuthStore`. Default 60000. */
-  sweepIntervalMs?: number;
+  /** Sweep interval of the default `MemoryAuthStore` in seconds. Default 60. */
+  sweepInterval?: number;
 }
 
 export type AuthDecoratorOptions<TUser extends AuthUser = AuthUser> = AuthOptions<TUser> & { name?: string };

@@ -240,7 +240,7 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
   }
 
   private readBearer(request: Request): string | null {
-    if (this.getOptions().header === false) {
+    if (this.getOptions().bearer === false) {
       return null;
     }
 

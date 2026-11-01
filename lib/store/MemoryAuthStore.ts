@@ -9,7 +9,8 @@ export class MemoryAuthStore<TUser = AuthUser> implements AuthSessionStore<TUser
 
   private timer: ReturnType<typeof setInterval> | undefined;
 
-  public constructor(private readonly sweepIntervalMs = 60_000) {}
+  /** @param sweepInterval seconds between sweeps of expired rows. */
+  public constructor(private readonly sweepInterval = 60) {}
 
   public get size(): number {
     return this.sessions.size;
@@ -83,7 +84,7 @@ export class MemoryAuthStore<TUser = AuthUser> implements AuthSessionStore<TUser
       return;
     }
 
-    this.timer = setInterval(() => this.sweep(), this.sweepIntervalMs);
+    this.timer = setInterval(() => this.sweep(), this.sweepInterval * 1000);
     this.timer.unref();
   }
 
