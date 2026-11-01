@@ -40,7 +40,7 @@ export class AuthGuardMiddleware extends AsenaMiddlewareService {
     const session = await resolveSession(ctx, provider, getRawRequest(ctx));
 
     if (!session) {
-      throw new HttpException(401, 'Unauthorized');
+      throw new HttpException(401, 'Unauthorized', { headers: { 'WWW-Authenticate': 'Bearer' } });
     }
 
     if (mark.roles?.length) {

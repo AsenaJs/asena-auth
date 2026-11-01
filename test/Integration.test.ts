@@ -316,7 +316,10 @@ describe.each(adapters)('asena-auth end to end on $name', ({ name, make, routes 
     await using app = await boot();
     const { token } = await login(app);
 
-    expect((await fetch(`${app.baseUrl}/me`)).status).toBe(401);
+    const anonymous = await fetch(`${app.baseUrl}/me`);
+
+    expect(anonymous.status).toBe(401);
+    expect(anonymous.headers.get('www-authenticate')).toBe('Bearer');
 
     const viaBearer = await fetch(`${app.baseUrl}/me`, { headers: bearer(token) });
 
@@ -405,7 +408,10 @@ describe.each(adapters)('asena-auth end to end on $name', ({ name, make, routes 
     const user = (await login(app, ['user'])).token;
     const admin = (await login(app, ['admin'])).token;
 
-    expect((await fetch(`${app.baseUrl}/me/admin`, { headers: bearer(user) })).status).toBe(403);
+    const forbidden = await fetch(`${app.baseUrl}/me/admin`, { headers: bearer(user) });
+
+    expect(forbidden.status).toBe(403);
+    expect(forbidden.headers.get('www-authenticate')).toBeNull();
     expect((await fetch(`${app.baseUrl}/me/admin`, { headers: bearer(admin) })).status).toBe(200);
     expect((await fetch(`${app.baseUrl}/ba/admin`, { headers: bearer('ba-token') })).status).toBe(200);
   });
