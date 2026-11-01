@@ -575,6 +575,33 @@ describe('sessions', () => {
       expect(await store.get(session.session.id)).toBeNull();
     });
 
+    test('a loader answering undefined fails closed like null: no session, row deleted', async () => {
+      const store = new MemoryAuthStore();
+
+      @Auth({ store, loadUser: async () => undefined as any })
+      class Sloppy extends AsenaAuthService {}
+
+      const auth = make(Sloppy);
+      const { token, session } = await auth.createSession({ id: 'u1', roles: ['admin'] });
+
+      expect(await auth.getSession(bearer(token))).toBeNull();
+      expect(await store.get(session.session.id)).toBeNull();
+    });
+
+    test('listUserSessions returns the stored snapshots and never calls loadUser', async () => {
+      const loadUser = mock(async (id: string) => ({ id, roles: ['user'] }));
+
+      @Auth({ loadUser })
+      class Fresh extends AsenaAuthService {}
+
+      const auth = make(Fresh);
+
+      await auth.createSession({ id: 'u1', roles: ['admin'] });
+
+      expect((await auth.listUserSessions('u1')).map((s) => s.user)).toEqual([{ id: 'u1', roles: ['admin'] }]);
+      expect(loadUser).not.toHaveBeenCalled();
+    });
+
     test('a loaded user need not be cloneable: it is handed out as loaded', async () => {
       class Row {
         public constructor(public readonly id: string) {}

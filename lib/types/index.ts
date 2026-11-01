@@ -83,8 +83,8 @@ export interface AuthOptions<TUser extends AuthUser = AuthUser> {
   hashing?: HashingOptions;
   /**
    * Called on every authenticated request with the session's user id; its result replaces the user stored
-   * at `createSession` (roles are resolved from it, and it is not cloned). `null` ends the session and
-   * deletes its row.
+   * at `createSession` (roles are resolved from it, and it is not cloned). `null` (or `undefined`) ends the
+   * session and deletes its row. `listUserSessions` does not call it.
    */
   loadUser?: (userId: string) => Promise<TUser | null>;
   /** Defaults to a `MemoryAuthStore`. */

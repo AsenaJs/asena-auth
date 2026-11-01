@@ -222,7 +222,10 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
     return token;
   }
 
-  /** The user's unexpired sessions. Needs a store implementing `listByUser`. */
+  /**
+   * The user's unexpired sessions, each with the user stored at `createSession` (`loadUser` is not called).
+   * Needs a store implementing `listByUser`.
+   */
   public async listUserSessions(userId: string): Promise<AuthSession<TUser>[]> {
     const store = this.getStore();
 
@@ -283,7 +286,7 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
     const loadUser = this.getOptions().loadUser;
     const loaded = loadUser ? await loadUser(stored.userId) : undefined;
 
-    if (loaded === null) {
+    if (loadUser && (loaded === null || loaded === undefined)) {
       await store.delete(stored.id);
 
       return null;
