@@ -6,7 +6,7 @@ Authentication for [AsenaJS](https://asena.sh): a native opaque-session provider
 
 - Bun 1.4 or higher
 - `@asenajs/asena` 0.12.2 or higher
-- `better-auth` 1.2 or higher, only for the Better Auth provider
+- `better-auth` 1.2 or higher (below 2), only for the Better Auth provider
 
 ## Installation
 
@@ -37,7 +37,7 @@ export class MeController {
 await AsenaServerFactory.create({ adapter, logger, imports: [...authComponents] });
 ```
 
-`AppAuth.createSession(user)` issues the token; send it as `Authorization: Bearer <token>` or the `asena_session` cookie.
+`AppAuth.createSession(user)` issues the token; send it as `Authorization: Bearer <token>` or the `asena_session` cookie. `AppAuth.logout(ctx)` ends the current session and clears the cookie.
 
 ## Documentation
 
