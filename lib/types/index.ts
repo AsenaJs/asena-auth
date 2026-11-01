@@ -60,6 +60,12 @@ export interface AuthOptions<TUser extends AuthUser = AuthUser> {
   bearer?: boolean;
   /** Session lifetime in seconds. Default 604800 (7 days). */
   sessionTtl?: number;
+  /**
+   * Hard cap in seconds, counted from the session's creation: past it the session is invalid even if
+   * sliding kept it alive, and sliding never extends it beyond. Default 2592000 (30 days); `false` disables.
+   * Must not be smaller than `sessionTtl` (boot error).
+   */
+  absoluteTtl?: number | false;
   /** Extend the session when less than half of its lifetime is left. Default `true`. */
   sliding?: boolean;
   /** Random bytes per token. Default 32. */

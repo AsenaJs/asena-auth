@@ -8,6 +8,7 @@ import type { AuthSessionStore, StoredSession } from './store';
 import type { AuthOptions } from './types';
 
 const DEFAULT_TTL_SECONDS = 604_800;
+const DEFAULT_ABSOLUTE_TTL_SECONDS = 2_592_000;
 const DEFAULT_COOKIE_NAME = 'asena_session';
 
 // Providers may share one store object; it starts with the first and stops with the last.
@@ -40,6 +41,15 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
     if (!this.options || !this.store) {
       throw new Error(
         `${this.constructor.name}: auth options not initialized. Decorate the class with @Auth({...}) and extend AsenaAuthService.`,
+      );
+    }
+
+    const absoluteTtl = this.options.absoluteTtl ?? DEFAULT_ABSOLUTE_TTL_SECONDS;
+
+    if (absoluteTtl !== false && absoluteTtl < this.ttlSeconds) {
+      throw new Error(
+        `${this.constructor.name}: absoluteTtl (${absoluteTtl}) is smaller than sessionTtl (${this.ttlSeconds}). ` +
+          'Raise absoluteTtl, lower sessionTtl, or set absoluteTtl: false.',
       );
     }
 
@@ -140,15 +150,14 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
     const stored = await store.get(hashToken(token));
     const now = Date.now();
 
-    if (!stored || stored.expiresAt <= now) {
+    if (!stored || !this.isLive(stored, now)) {
       return null;
     }
 
     const ttlMs = this.ttlSeconds * 1000;
+    const expiresAt = Math.min(now + ttlMs, this.absoluteEnd(stored));
 
-    if (this.getOptions().sliding !== false && stored.expiresAt - now < ttlMs / 2) {
-      const expiresAt = now + ttlMs;
-
+    if (this.getOptions().sliding !== false && stored.expiresAt - now < ttlMs / 2 && expiresAt > stored.expiresAt) {
       await store.touch(stored.id, expiresAt);
 
       if (!bearerToken) {
@@ -212,7 +221,7 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
     const now = Date.now();
     const rows = await store.listByUser(userId);
 
-    return rows.filter((row) => row.expiresAt > now).map((row) => this.toAuthSession(row));
+    return rows.filter((row) => this.isLive(row, now)).map((row) => this.toAuthSession(row));
   }
 
   public async revokeUserSessions(userId: string): Promise<void> {
@@ -237,6 +246,16 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
 
   private get ttlSeconds(): number {
     return this.getOptions().sessionTtl ?? DEFAULT_TTL_SECONDS;
+  }
+
+  private absoluteEnd(stored: StoredSession<TUser>): number {
+    const absoluteTtl = this.getOptions().absoluteTtl ?? DEFAULT_ABSOLUTE_TTL_SECONDS;
+
+    return absoluteTtl === false ? Infinity : stored.createdAt + absoluteTtl * 1000;
+  }
+
+  private isLive(stored: StoredSession<TUser>, now: number): boolean {
+    return stored.expiresAt > now && this.absoluteEnd(stored) > now;
   }
 
   private readBearer(request: Request): string | null {

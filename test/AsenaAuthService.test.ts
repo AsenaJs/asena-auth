@@ -299,6 +299,111 @@ describe('sessions', () => {
     expect(touch).not.toHaveBeenCalled();
   });
 
+  test('absoluteTtl: sliding never moves expiresAt past createdAt + absoluteTtl, and the cap ends the session', async () => {
+    @Auth({ sessionTtl: 10, absoluteTtl: 15 })
+    class Capped extends AsenaAuthService {}
+
+    const auth = make(Capped);
+    const { token, session } = await auth.createSession({ id: 'u1' });
+    const createdAt = session.session.createdAt.getTime();
+
+    setSystemTime(new Date(createdAt + 6_000));
+
+    expect((await auth.getSession(bearer(token)))?.session.expiresAt.getTime()).toBe(createdAt + 15_000);
+
+    setSystemTime(new Date(createdAt + 14_000));
+
+    expect(await auth.getSession(bearer(token))).not.toBeNull();
+
+    setSystemTime(new Date(createdAt + 15_000));
+
+    expect(await auth.getSession(bearer(token))).toBeNull();
+  });
+
+  test('absoluteTtl: a store row whose expiresAt outlives the cap is still rejected once the cap passed', async () => {
+    const store = new MemoryAuthStore();
+
+    @Auth({ sessionTtl: 10, absoluteTtl: 15, store })
+    class Capped extends AsenaAuthService {}
+
+    const auth = make(Capped);
+    const { token, session } = await auth.createSession({ id: 'u1' });
+    const createdAt = session.session.createdAt.getTime();
+
+    await store.touch(session.session.id, createdAt + 60_000);
+    setSystemTime(new Date(createdAt + 16_000));
+
+    expect(await auth.getSession(bearer(token))).toBeNull();
+    expect(await auth.listUserSessions('u1')).toEqual([]);
+  });
+
+  test('absoluteTtl defaults to 30 days: a 7-day session slid on day 29 ends on day 30', async () => {
+    const day = 86_400_000;
+    const auth = make(
+      (() => {
+        @Auth({})
+        class Defaults extends AsenaAuthService {}
+
+        return Defaults;
+      })(),
+    );
+    const { token, session } = await auth.createSession({ id: 'u1' });
+    const createdAt = session.session.createdAt.getTime();
+
+    for (let d = 3; d <= 27; d += 3) {
+      setSystemTime(new Date(createdAt + d * day + 1));
+      expect(await auth.getSession(bearer(token))).not.toBeNull();
+    }
+
+    setSystemTime(new Date(createdAt + 29 * day));
+
+    expect((await auth.getSession(bearer(token)))?.session.expiresAt.getTime()).toBe(createdAt + 30 * day);
+
+    setSystemTime(new Date(createdAt + 30 * day));
+
+    expect(await auth.getSession(bearer(token))).toBeNull();
+  });
+
+  test('absoluteTtl: false lets sliding keep a session alive past any cap', async () => {
+    @Auth({ sessionTtl: 10, absoluteTtl: false })
+    class Uncapped extends AsenaAuthService {}
+
+    const auth = make(Uncapped);
+    const { token, session } = await auth.createSession({ id: 'u1' });
+    const createdAt = session.session.createdAt.getTime();
+
+    for (let s = 6; s <= 60; s += 6) {
+      setSystemTime(new Date(createdAt + s * 1_000));
+      expect(await auth.getSession(bearer(token))).not.toBeNull();
+    }
+  });
+
+  test('absoluteTtl smaller than sessionTtl fails the start, naming both values', async () => {
+    @Auth({ sessionTtl: 3600, absoluteTtl: 60 })
+    class Inverted extends AsenaAuthService {}
+
+    await expect(make(Inverted).onStart()).rejects.toThrow(/Inverted.*absoluteTtl \(60\).*sessionTtl \(3600\)/);
+
+    @Auth({ sessionTtl: 3_000_000 })
+    class LongDefault extends AsenaAuthService {}
+
+    await expect(make(LongDefault).onStart()).rejects.toThrow(/absoluteTtl \(2592000\).*sessionTtl \(3000000\)/);
+  });
+
+  test('absoluteTtl smaller than sessionTtl fails a real boot', async () => {
+    @Auth({ sessionTtl: 3600, absoluteTtl: 60 })
+    class Inverted extends AsenaAuthService {}
+
+    const error = await createTestApp({
+      adapter: createErgenecoreAdapter({ logger: silentLogger }),
+      logger: silentLogger,
+      components: [Inverted],
+    }).catch((e: unknown) => e as Error);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(String((error as Error).cause)).toContain('absoluteTtl (60) is smaller than sessionTtl (3600)');
+  });
+
   test('revokeSession kills one token, revokeUserSessions every token of the user', async () => {
     const auth = make(AppAuth);
     const { token: t1 } = await auth.createSession({ id: 'u1' });
