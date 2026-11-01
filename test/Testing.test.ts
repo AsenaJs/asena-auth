@@ -1,12 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import { Protected, Roles, getAuthSession } from '@asenajs/asena/auth';
-import { Controller } from '@asenajs/asena/decorators';
+import { Controller, WebSocket as WebSocketNamespace } from '@asenajs/asena/decorators';
 import { Get } from '@asenajs/asena/decorators/http';
-import { createWebTest, silentLogger } from '@asenajs/asena/test';
+import { createTestApp, createWebTest, silentLogger } from '@asenajs/asena/test';
+import { AsenaWebSocketService } from '@asenajs/asena/web-socket';
 import { createErgenecoreAdapter } from '@asenajs/ergenecore';
 import { createHonoAdapter } from '@asenajs/hono-adapter';
-import { authComponents } from '../index';
+import { AuthWebSocketMiddleware, authComponents } from '../index';
 import { TestAuth, TestAuthProvider } from '../testing';
+import { connect } from './wsClient';
 
 const users = {
   ada: { id: 'u1', roles: ['admin'] },
@@ -58,6 +60,68 @@ describe.each(adapters)('TestAuthProvider under createWebTest on $name', ({ make
     } finally {
       await app.stop();
     }
+  });
+});
+
+describe.each(adapters)('TestAuthProvider under createTestApp on $name', ({ make }) => {
+  @TestAuth({ users: { ada: users.ada }, primary: true })
+  class PrimaryTestAuth extends TestAuthProvider {}
+
+  @TestAuth({ users: { bob: users.bob }, name: 'Partner' })
+  class PartnerTestAuth extends TestAuthProvider {}
+
+  @Protected({ provider: 'Partner' })
+  @Controller('/partner')
+  class PartnerRoutes {
+    @Get('/')
+    me(ctx: any) {
+      return ctx.send({ user: getAuthSession(ctx)?.user.id });
+    }
+  }
+
+  @WebSocketNamespace({ path: '/chat', name: 'TestChat', middlewares: [AuthWebSocketMiddleware] })
+  class Chat extends AsenaWebSocketService {
+    protected onOpen(ws: any) {
+      ws.send(JSON.stringify(ws.data.values));
+    }
+  }
+
+  const boot = (components: any[]) =>
+    createTestApp({ adapter: make() as any, logger: silentLogger, components, imports: [...authComponents] });
+
+  test('the header drives @Protected and @Roles routes', async () => {
+    await using app = await boot([AppTestAuth, Me]);
+    const as = (key: string, path = '/me') => fetch(`${app.baseUrl}${path}`, { headers: { 'x-test-user': key } });
+
+    expect((await fetch(`${app.baseUrl}/me`)).status).toBe(401);
+    expect(await (await as('ada')).json()).toEqual({ user: 'u1' });
+    expect((await as('ada', '/me/admin')).status).toBe(200);
+    expect((await as('bob', '/me/admin')).status).toBe(403);
+  });
+
+  test('primary: true serves unnamed routes, name registers the provider a route can name', async () => {
+    await using app = await boot([PrimaryTestAuth, PartnerTestAuth, Me, PartnerRoutes]);
+    const as = (key: string, path: string) => fetch(`${app.baseUrl}${path}`, { headers: { 'x-test-user': key } });
+
+    expect(await (await as('ada', '/me')).json()).toEqual({ user: 'u1' });
+    expect((await as('bob', '/me')).status).toBe(401);
+    expect(await (await as('bob', '/partner')).json()).toEqual({ user: 'u2' });
+    expect((await as('ada', '/partner')).status).toBe(401);
+  });
+
+  test('a WebSocket route behind AuthWebSocketMiddleware opens for a known header only', async () => {
+    await using app = await boot([AppTestAuth, Chat]);
+
+    const opened = await connect(app.wsUrl('/chat'), { headers: { 'x-test-user': 'ada' } });
+
+    expect(opened.opened).toBe(true);
+
+    if (opened.opened) {
+      expect(opened.message.authSession.user.id).toBe('u1');
+    }
+
+    expect(await connect(app.wsUrl('/chat'), { headers: { 'x-test-user': 'nobody' } })).toEqual({ opened: false });
+    expect(await connect(app.wsUrl('/chat'))).toEqual({ opened: false });
   });
 });
 
