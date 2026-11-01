@@ -1,6 +1,8 @@
+import type { AsenaContext } from '@asenajs/asena/adapter';
 import { OnStart, OnStop } from '@asenajs/asena/decorators/ioc';
 import type { AsenaAuthProvider, AuthSession, AuthUser } from '@asenajs/asena/auth';
 import { generateToken, hashPassword, hashToken, verifyPassword } from './crypto';
+import { clearSessionCookie, getRawRequest } from './helpers/context';
 import { defaultRolesResolver } from './helpers/roles';
 import type { AuthSessionStore, StoredSession } from './store';
 import type { AuthOptions } from './types';
@@ -172,6 +174,26 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
 
   public async revokeSession(token: string): Promise<void> {
     await this.getStore().delete(hashToken(token));
+  }
+
+  /** Deletes by the stored id (`AuthSession.session.id`), e.g. to sign out one of a user's devices. */
+  public async revokeSessionById(id: string): Promise<void> {
+    await this.getStore().delete(id);
+  }
+
+  /**
+   * Ends the session of the current request (the Bearer token, else the cookie, as `getSession` reads them)
+   * and clears the session cookie. Without a session it only clears the cookie.
+   */
+  public async logout(ctx: AsenaContext<any, any>): Promise<void> {
+    const request = getRawRequest(ctx);
+    const token = this.readBearer(request) ?? this.readCookie(request.headers.get('cookie'));
+
+    if (token) {
+      await this.revokeSession(token);
+    }
+
+    await clearSessionCookie(ctx, this);
   }
 
   public async revokeUserSessions(userId: string): Promise<void> {

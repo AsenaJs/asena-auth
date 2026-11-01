@@ -308,6 +308,17 @@ describe('sessions', () => {
     expect(await auth.getSession(bearer(other))).not.toBeNull();
   });
 
+  test('revokeSessionById ends the session whose AuthSession.session.id it is given, and only that one', async () => {
+    const auth = make(AppAuth);
+    const { token, session } = await auth.createSession({ id: 'u1' });
+    const { token: sameUser } = await auth.createSession({ id: 'u1' });
+
+    await auth.revokeSessionById(session.session.id);
+
+    expect(await auth.getSession(bearer(token))).toBeNull();
+    expect(await auth.getSession(bearer(sameUser))).not.toBeNull();
+  });
+
   test('passwords use the configured hashing', async () => {
     @Auth({ hashing: { cost: 4 } })
     class Cheap extends AsenaAuthService {}

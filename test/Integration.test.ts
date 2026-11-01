@@ -112,6 +112,13 @@ class Login {
 
     return ctx.send({ token });
   }
+
+  @Post('/logout')
+  async logout(ctx: any) {
+    await this.auth.logout(ctx);
+
+    return ctx.send({ ok: true });
+  }
 }
 
 @Protected()
@@ -252,7 +259,7 @@ const json = (body: unknown, headers: Record<string, string> = {}) => ({
   body: JSON.stringify(body),
 });
 
-describe.each(adapters)('asena-auth end to end on $name', ({ make, routes }) => {
+describe.each(adapters)('asena-auth end to end on $name', ({ name, make, routes }) => {
   const boot = (extra: any[] = []) =>
     createTestApp({
       adapter: make(),
@@ -311,6 +318,44 @@ describe.each(adapters)('asena-auth end to end on $name', ({ make, routes }) => 
     await (await app.resolve<AppAuth>('AppAuth')).revokeSession(token);
 
     expect((await fetch(`${app.baseUrl}/me`, { headers: bearer(token) })).status).toBe(401);
+  });
+
+  test('logout ends the current session at once and clears the cookie with its attributes', async () => {
+    await using app = await boot();
+    const { token } = await login(app);
+    const other = (await login(app)).token;
+
+    const res = await fetch(`${app.baseUrl}/auth/logout`, { method: 'POST', headers: bearer(token) });
+    const cleared = Bun.Cookie.parse(res.headers.getSetCookie()[0] ?? '');
+
+    expect(res.status).toBe(200);
+    expect(cleared.name).toBe('asena_session');
+    expect(cleared.value).toBe('');
+    expect(cleared.maxAge === 0 || (cleared.expires?.getTime() ?? Infinity) <= Date.now()).toBe(true);
+    expect(cleared.path).toBe('/');
+    expect(cleared.sameSite).toBe('lax');
+
+    // ergenecore 5.0.1's deleteCookie forwards only path and domain to Bun's cookie map.
+    if (name === 'hono') {
+      expect(cleared.secure).toBe(true);
+    }
+
+    expect((await fetch(`${app.baseUrl}/me`, { headers: bearer(token) })).status).toBe(401);
+    expect((await fetch(`${app.baseUrl}/me`, { headers: bearer(other) })).status).toBe(200);
+  });
+
+  test('logout by cookie revokes that session; logout without a session still answers and clears', async () => {
+    await using app = await boot();
+    const { token } = await login(app);
+    const cookie = { cookie: `asena_session=${token}` };
+
+    expect((await fetch(`${app.baseUrl}/auth/logout`, { method: 'POST', headers: cookie })).status).toBe(200);
+    expect((await fetch(`${app.baseUrl}/me`, { headers: cookie })).status).toBe(401);
+
+    const anonymous = await fetch(`${app.baseUrl}/auth/logout`, { method: 'POST' });
+
+    expect(anonymous.status).toBe(200);
+    expect(anonymous.headers.getSetCookie()[0]).toStartWith('asena_session=;');
   });
 
   test('order: the guard rejects before the route middleware and the validator ever run', async () => {
