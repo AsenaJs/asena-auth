@@ -8,7 +8,7 @@ import type { AuthOptions } from './types';
 const DEFAULT_TTL_SECONDS = 604_800;
 const DEFAULT_COOKIE_NAME = 'asena_session';
 
-// Core 0.12 constructs an @Implements singleton twice, so a shared store would otherwise start and stop twice.
+// Providers may share one store object; it starts with the first and stops with the last.
 const storeUsers = new WeakMap<AuthSessionStore<any>, { users: number; started: Promise<void> }>();
 
 export interface SessionCookieOptions {

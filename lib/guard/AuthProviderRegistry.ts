@@ -33,19 +33,15 @@ export class AuthProviderRegistry implements AuthProviderRegistryLike {
 
   @OnStart()
   public async onStart(): Promise<void> {
-    // Core builds an @Implements singleton twice (under its name and under the strategy key); the
-    // one apps @Inject - and create sessions through - is the named one, so resolve by name.
     const discovered = await this.container.resolveStrategy<AsenaAuthProvider>(AUTH_PROVIDER_KEY);
-    const names = discovered
-      .map((provider) => getTypedMetadata<string>(ComponentConstants.NameKey, provider.constructor))
-      .filter((name): name is string => typeof name === 'string')
-      .sort();
+    const named = discovered
+      .map(
+        (provider) => [getTypedMetadata<string>(ComponentConstants.NameKey, provider.constructor), provider] as const,
+      )
+      .filter((entry): entry is readonly [string, AsenaAuthProvider] => typeof entry[0] === 'string')
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
 
-    this.byName = new Map();
-
-    for (const name of names) {
-      this.byName.set(name, (await this.container.resolve<AsenaAuthProvider>(name)) as AsenaAuthProvider);
-    }
+    this.byName = new Map(named);
 
     const primaries = [...this.byName].filter(([, provider]) => (provider as { primary?: boolean }).primary === true);
 

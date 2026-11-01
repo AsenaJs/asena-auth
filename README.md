@@ -5,7 +5,7 @@ Authentication for [AsenaJS](https://asena.sh): a native opaque-session provider
 ## Requirements
 
 - Bun 1.4 or higher
-- `@asenajs/asena` 0.12.0 or higher
+- `@asenajs/asena` 0.12.2 or higher
 - `better-auth` 1.2 or higher, only for the Better Auth provider
 
 ## Installation

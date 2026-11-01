@@ -336,7 +336,7 @@ describe('sessions', () => {
     expect(stop).toHaveBeenCalledTimes(1);
   });
 
-  test('through the container a supplied store starts and stops once, although core builds the provider twice', async () => {
+  test('through the container a supplied store starts and stops once', async () => {
     const store = new MemoryAuthStore();
     const start = spyOn(store, 'onStart');
     const stop = spyOn(store, 'onStop');
