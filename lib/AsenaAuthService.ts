@@ -196,6 +196,22 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
     await clearSessionCookie(ctx, this);
   }
 
+  /** The user's unexpired sessions. Needs a store implementing `listByUser`. */
+  public async listUserSessions(userId: string): Promise<AuthSession<TUser>[]> {
+    const store = this.getStore();
+
+    if (!store.listByUser) {
+      throw new Error(
+        `${this.constructor.name}.listUserSessions: the session store ${store.constructor.name} does not implement listByUser(userId).`,
+      );
+    }
+
+    const now = Date.now();
+    const rows = await store.listByUser(userId);
+
+    return rows.filter((row) => row.expiresAt > now).map((row) => this.toAuthSession(row));
+  }
+
   public async revokeUserSessions(userId: string): Promise<void> {
     await this.getStore().deleteByUser(userId);
   }

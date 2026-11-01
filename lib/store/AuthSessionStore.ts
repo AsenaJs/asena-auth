@@ -18,6 +18,7 @@ export interface StoredSession<TUser = AuthUser> {
 /**
  * Persistence for native sessions. `get` may return an expired row; the service checks expiry.
  * A store that needs DI is set from a subclass's `onStart()` via `setStore(...)` before `super.onStart()`.
+ * Methods added in 1.x are always optional.
  */
 export interface AuthSessionStore<TUser = AuthUser> {
   create(session: StoredSession<TUser>): Promise<void>;
@@ -25,6 +26,8 @@ export interface AuthSessionStore<TUser = AuthUser> {
   delete(id: string): Promise<void>;
   deleteByUser(userId: string): Promise<void>;
   touch(id: string, expiresAt: number): Promise<void>;
+  /** Every row of the user; may include expired rows, the service filters them. Needed by `listUserSessions`. */
+  listByUser?(userId: string): Promise<StoredSession<TUser>[]>;
   /** Called once per store object, when the first provider using it starts. */
   onStart?(): void | Promise<void>;
   /** Called once per store object, when the last provider using it stops. */

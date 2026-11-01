@@ -40,6 +40,17 @@ describe('MemoryAuthStore', () => {
     expect(store.size).toBe(1);
   });
 
+  test("listByUser returns that user's rows only, and nothing for an unknown user", async () => {
+    const store = new MemoryAuthStore();
+
+    await store.create(row('a1', 'alice'));
+    await store.create(row('a2', 'alice'));
+    await store.create(row('b1', 'bob'));
+
+    expect((await store.listByUser('alice')).map((s) => s.id).sort()).toEqual(['a1', 'a2']);
+    expect(await store.listByUser('nobody')).toEqual([]);
+  });
+
   test('an expired row reads as null and is removed', async () => {
     const store = new MemoryAuthStore();
 

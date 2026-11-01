@@ -319,6 +319,53 @@ describe('sessions', () => {
     expect(await auth.getSession(bearer(sameUser))).not.toBeNull();
   });
 
+  test("listUserSessions returns the user's live sessions only, each revocable by its id", async () => {
+    @Auth({ sessionTtl: 10, sliding: false })
+    class Listing extends AsenaAuthService {}
+
+    const auth = make(Listing);
+    const { session: early } = await auth.createSession({ id: 'u1', name: 'a' });
+
+    setSystemTime(new Date(Date.now() + 6_000));
+
+    const { token, session: late } = await auth.createSession({ id: 'u1', name: 'a' });
+
+    await auth.createSession({ id: 'u2' });
+
+    const both = await auth.listUserSessions('u1');
+
+    expect(both.map((s) => s.session.id).sort()).toEqual([early.session.id, late.session.id].sort());
+    expect(both[0]?.user).toEqual({ id: 'u1', name: 'a' });
+
+    setSystemTime(new Date(Date.now() + 5_000));
+
+    const live = await auth.listUserSessions('u1');
+
+    expect(live.map((s) => s.session.id)).toEqual([late.session.id]);
+
+    await auth.revokeSessionById(live[0]!.session.id);
+
+    expect(await auth.getSession(bearer(token))).toBeNull();
+    expect(await auth.listUserSessions('u1')).toEqual([]);
+  });
+
+  test('listUserSessions on a store without listByUser names the store', async () => {
+    class LegacyStore {
+      async create() {}
+      async get() {
+        return null;
+      }
+      async delete() {}
+      async deleteByUser() {}
+      async touch() {}
+    }
+
+    @Auth({ store: new LegacyStore() })
+    class Legacy extends AsenaAuthService {}
+
+    await expect(make(Legacy).listUserSessions('u1')).rejects.toThrow(/LegacyStore.*listByUser/);
+  });
+
   test('passwords use the configured hashing', async () => {
     @Auth({ hashing: { cost: 4 } })
     class Cheap extends AsenaAuthService {}

@@ -66,6 +66,10 @@ export class MemoryAuthStore<TUser = AuthUser> implements AuthSessionStore<TUser
     this.byUser.delete(userId);
   }
 
+  public async listByUser(userId: string): Promise<StoredSession<TUser>[]> {
+    return [...(this.byUser.get(userId) ?? [])].flatMap((id) => this.sessions.get(id) ?? []);
+  }
+
   public async touch(id: string, expiresAt: number): Promise<void> {
     const session = this.sessions.get(id);
 
