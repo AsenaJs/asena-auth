@@ -79,6 +79,12 @@ export interface AuthOptions<TUser extends AuthUser = AuthUser> {
   /** Random bytes per token. Default 32. */
   tokenBytes?: number;
   hashing?: HashingOptions;
+  /**
+   * Called on every authenticated request with the session's user id; its result replaces the user stored
+   * at `createSession` (roles are resolved from it, and it is not cloned). `null` ends the session and
+   * deletes its row.
+   */
+  loadUser?: (userId: string) => Promise<TUser | null>;
   /** Defaults to a `MemoryAuthStore`. */
   store?: AuthSessionStore<TUser>;
   /** Sweep interval of the default `MemoryAuthStore` in seconds. Default 60. */

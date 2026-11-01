@@ -155,6 +155,15 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
       return null;
     }
 
+    const loadUser = this.getOptions().loadUser;
+    const loaded = loadUser ? await loadUser(stored.userId) : undefined;
+
+    if (loaded === null) {
+      await store.delete(stored.id);
+
+      return null;
+    }
+
     const ttlMs = this.ttlSeconds * 1000;
     const expiresAt = Math.min(now + ttlMs, this.absoluteEnd(stored));
 
@@ -165,10 +174,10 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
         this.slidCookies.set(request, token);
       }
 
-      return this.toAuthSession({ ...stored, expiresAt });
+      return this.toAuthSession({ ...stored, expiresAt }, loaded);
     }
 
-    return this.toAuthSession(stored);
+    return this.toAuthSession(stored, loaded);
   }
 
   /**
@@ -356,9 +365,9 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
     }
   }
 
-  private toAuthSession(stored: StoredSession<TUser>): AuthSession<TUser> {
+  private toAuthSession(stored: StoredSession<TUser>, loaded?: TUser): AuthSession<TUser> {
     return {
-      user: structuredClone(stored.user),
+      user: loaded ?? structuredClone(stored.user),
       session: {
         id: stored.id,
         userId: stored.userId,

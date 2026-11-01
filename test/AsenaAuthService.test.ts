@@ -508,6 +508,76 @@ describe('sessions', () => {
     });
   });
 
+  describe('loadUser', () => {
+    test('the loaded user replaces the stored snapshot on every request, and roles follow it', async () => {
+      const directory: Record<string, { id: string; roles: string[] } | null> = { u1: { id: 'u1', roles: ['admin'] } };
+      const loadUser = mock(async (id: string) => directory[id] ?? null);
+
+      @Auth({ loadUser })
+      class Fresh extends AsenaAuthService {}
+
+      const auth = make(Fresh);
+      const { token } = await auth.createSession({ id: 'u1', roles: ['admin'] });
+
+      expect(auth.getRoles((await auth.getSession(bearer(token)))!)).toEqual(['admin']);
+
+      directory.u1 = { id: 'u1', roles: ['user'] };
+
+      const demoted = (await auth.getSession(bearer(token)))!;
+
+      expect(demoted.user).toEqual({ id: 'u1', roles: ['user'] });
+      expect(auth.getRoles(demoted)).toEqual(['user']);
+      expect(loadUser).toHaveBeenCalledTimes(2);
+      expect(loadUser).toHaveBeenLastCalledWith('u1');
+    });
+
+    test('a user the loader no longer finds ends the session and deletes its row', async () => {
+      const store = new MemoryAuthStore();
+
+      @Auth({ store, loadUser: async () => null })
+      class Gone extends AsenaAuthService {}
+
+      const auth = make(Gone);
+      const { token, session } = await auth.createSession({ id: 'u1' });
+
+      expect(await auth.getSession(bearer(token))).toBeNull();
+      expect(await store.get(session.session.id)).toBeNull();
+    });
+
+    test('a loaded user need not be cloneable: it is handed out as loaded', async () => {
+      class Row {
+        public constructor(public readonly id: string) {}
+
+        public can(): boolean {
+          return true;
+        }
+      }
+
+      @Auth({ loadUser: async (id) => new Row(id) as any })
+      class Orm extends AsenaAuthService {}
+
+      const auth = make(Orm);
+      const { token } = await auth.createSession({ id: 'u1' });
+
+      expect((await auth.getSession(bearer(token)))?.user).toBeInstanceOf(Row);
+    });
+
+    test('an expired session is not loaded', async () => {
+      const loadUser = mock(async (id: string) => ({ id }));
+
+      @Auth({ sessionTtl: 1, loadUser })
+      class Lazy extends AsenaAuthService {}
+
+      const auth = make(Lazy);
+      const { token } = await auth.createSession({ id: 'u1' });
+
+      setSystemTime(new Date(Date.now() + 1_500));
+
+      expect(await auth.getSession(bearer(token))).toBeNull();
+      expect(loadUser).not.toHaveBeenCalled();
+    });
+  });
+
   describe('rotateSession', () => {
     const ctxFor = (request: Request) => ({ req: request, setCookie: mock(async () => {}) });
 

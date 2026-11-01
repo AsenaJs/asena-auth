@@ -755,3 +755,45 @@ describe('boot errors (adapter-independent, ergenecore)', () => {
     expect(message).toContain('upgrade @asenajs/asena-auth');
   });
 });
+
+describe.each(adapters)('loadUser end to end on $name', ({ make }) => {
+  const directory = new Map<string, { id: string; roles: string[] }>();
+
+  @Auth({ loadUser: async (id) => directory.get(id) ?? null })
+  class FreshAuth extends AsenaAuthService {}
+
+  @Protected()
+  @Controller('/fresh')
+  class Fresh {
+    @Roles('admin')
+    @Get('/admin')
+    admin(ctx: any) {
+      return ctx.send({ admin: true });
+    }
+  }
+
+  test('a role demotion applies on the next request; a deleted user is 401 and its row is gone', async () => {
+    await using app = await createTestApp({
+      adapter: make(),
+      logger: silentLogger,
+      components: [FreshAuth, Fresh],
+      imports: [AuthGuard, AuthGuardMiddleware, AuthProviderRegistry],
+    });
+    const auth = await app.resolve<FreshAuth>('FreshAuth');
+
+    directory.set('u1', { id: 'u1', roles: ['admin'] });
+
+    const { token } = await auth.createSession({ id: 'u1', roles: ['admin'] });
+
+    expect((await fetch(`${app.baseUrl}/fresh/admin`, { headers: bearer(token) })).status).toBe(200);
+
+    directory.set('u1', { id: 'u1', roles: ['user'] });
+
+    expect((await fetch(`${app.baseUrl}/fresh/admin`, { headers: bearer(token) })).status).toBe(403);
+
+    directory.delete('u1');
+
+    expect((await fetch(`${app.baseUrl}/fresh/admin`, { headers: bearer(token) })).status).toBe(401);
+    expect(await auth.listUserSessions('u1')).toEqual([]);
+  });
+});
