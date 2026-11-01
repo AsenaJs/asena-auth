@@ -33,7 +33,7 @@ export class AuthWebSocketMiddleware extends AsenaMiddlewareService {
     const session = await resolveSession(ctx, provider, request, request === raw);
 
     if (!session) {
-      return new Response(null, { status: 401 });
+      return new Response(null, { status: 401, headers: { 'WWW-Authenticate': 'Bearer' } });
     }
 
     // Both adapters replace the socket value on every write, so keep what earlier middlewares stored.

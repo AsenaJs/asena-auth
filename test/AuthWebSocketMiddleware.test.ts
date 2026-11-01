@@ -23,6 +23,7 @@ describe('AuthWebSocketMiddleware', () => {
 
     expect(result).toBeInstanceOf(Response);
     expect((result as Response).status).toBe(401);
+    expect((result as Response).headers.get('www-authenticate')).toBe('Bearer');
     expect(next).not.toHaveBeenCalled();
   });
 
