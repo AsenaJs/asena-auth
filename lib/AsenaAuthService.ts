@@ -178,7 +178,9 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
 
   /**
    * Ends the session of the current request (the Bearer token, else the cookie, as `getSession` reads them)
-   * and clears the session cookie. Without a session it only clears the cookie.
+   * and clears the session cookie. Without a session it only clears the cookie. With a Bearer token, a different
+   * session in the cookie is not revoked; its row expires on its own. A cross-site request (see `csrf`) does not
+   * read the cookie, so it cannot end that session - by design, the cookie is still cleared.
    */
   public async logout(ctx: AsenaContext<any, any>): Promise<void> {
     const request = getRawRequest(ctx);
