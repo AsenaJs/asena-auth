@@ -64,6 +64,8 @@ export interface AuthOptions<TUser extends AuthUser = AuthUser> {
    * is treated as having no cookie. Cross-site: `Sec-Fetch-Site` other than `same-origin`/`none`, else an
    * `Origin` that is not the request URL's origin; neither header means a non-browser client and passes.
    * `trustedOrigins` admits listed `Origin`s. Bearer tokens are exempt. Better Auth has its own handling.
+   * Behind a TLS-terminating proxy `request.url` is `http://`, so list the public `https://` origin in
+   * `trustedOrigins` for browsers that send no `Sec-Fetch-Site`; `X-Forwarded-*` headers are not read.
    */
   csrf?: { trustedOrigins?: string[] } | false;
   /** Session lifetime in seconds. Default 604800 (7 days). */
