@@ -17,6 +17,9 @@ import { AUTH_GUARD_MIDDLEWARE_NAME, AUTH_GUARD_NAME } from '../types';
 import { AuthGuardMiddleware } from './AuthGuardMiddleware';
 import { routeKey } from './routeKey';
 
+const KNOWN_ACCESS = new Set<string>(['protected', 'public']);
+const KNOWN_MARK_KEYS = new Set<string>(['access', 'provider', 'roles']);
+
 /** A protected route's mark plus where it came from, for lookups and boot-time error messages. */
 export type GuardRouteMark = GuardMark & { controller: string; method: string };
 
@@ -51,10 +54,43 @@ export class AuthGuard implements ComponentPostProcessor {
     }
 
     if (marked) {
+      this.rejectUnknownMarks(Class, collected);
       this.guardRoutes(Class, collected);
     }
 
     return instance;
+  }
+
+  /** A mark from a newer contract is refused at boot: treating it as public would open the route. */
+  private rejectUnknownMarks(Class: any, collected: CollectedGuardMetadata): void {
+    const controller = getTypedMetadata<string>(ComponentConstants.NameKey, Class) ?? Class.name;
+    const marks: [string, GuardMark | undefined][] = [
+      [controller, collected.classMark],
+      ...[...collected.methods].map(([method, mark]): [string, GuardMark] => [`${controller}.${method}`, mark]),
+    ];
+
+    for (const [where, mark] of marks) {
+      if (!mark) {
+        continue;
+      }
+
+      const unknownKey = Object.keys(mark).find((key) => !KNOWN_MARK_KEYS.has(key));
+      const problem = !KNOWN_ACCESS.has(mark.access)
+        ? `access '${String(mark.access)}'`
+        : unknownKey !== undefined
+          ? `key '${unknownKey}'`
+          : undefined;
+
+      if (problem) {
+        const message =
+          `[asena-auth] ${where} carries a guard mark with ${problem}, which this @asenajs/asena-auth version does ` +
+          'not enforce. The boot stops instead of leaving the route unguarded; upgrade @asenajs/asena-auth.';
+
+        this.logger.error(message);
+
+        throw new Error(message);
+      }
+    }
   }
 
   private guardRoutes(Class: any, collected: CollectedGuardMetadata): void {

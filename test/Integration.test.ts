@@ -1,11 +1,20 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { AUTH_PROVIDER_KEY, Protected, Public, Roles, getAuthSession } from '@asenajs/asena/auth';
+import {
+  AUTH_GUARD_CLASS_KEY,
+  AUTH_GUARD_METHODS_KEY,
+  AUTH_PROVIDER_KEY,
+  Protected,
+  Public,
+  Roles,
+  getAuthSession,
+} from '@asenajs/asena/auth';
 import type { AsenaAuthProvider, AuthSession } from '@asenajs/asena/auth';
 import { Config, Controller, Middleware, Service, WebSocket as WebSocketNamespace } from '@asenajs/asena/decorators';
 import { Get, Post } from '@asenajs/asena/decorators/http';
 import { Implements, Inject } from '@asenajs/asena/decorators/ioc';
 import { AsenaMiddlewareService } from '@asenajs/asena/middleware';
 import { createTestApp, silentLogger } from '@asenajs/asena/test';
+import { defineTypedMetadata } from '@asenajs/asena/utils';
 import { AsenaWebSocketService } from '@asenajs/asena/web-socket';
 import {
   Context as ErgeneContext,
@@ -616,5 +625,32 @@ describe('boot errors (adapter-independent, ergenecore)', () => {
 
   test('two providers, none primary, an unnamed protected route: the boot fails naming the route', async () => {
     expect(await bootError([First, Second, Guarded])).toContain('GET /guarded (Guarded.get)');
+  });
+
+  test.each([
+    ['class', { access: 'restricted' }, "access 'restricted'"],
+    ['method', { access: 'restricted' }, "access 'restricted'"],
+    ['class', { access: 'protected', permissions: ['read'] }, "key 'permissions'"],
+    ['method', { access: 'protected', permissions: ['read'] }, "key 'permissions'"],
+  ] as const)('a %s guard mark %j this version cannot enforce fails the boot', async (level, mark, what) => {
+    @Controller('/forged')
+    class Forged {
+      @Get('/')
+      get(ctx: any) {
+        return ctx.send('x');
+      }
+    }
+
+    if (level === 'class') {
+      defineTypedMetadata(AUTH_GUARD_CLASS_KEY, mark, Forged);
+    } else {
+      defineTypedMetadata(AUTH_GUARD_METHODS_KEY, new Map([['get', mark]]), Forged);
+    }
+
+    const message = await bootError([First, Forged], [AuthGuard, AuthGuardMiddleware, AuthProviderRegistry]);
+
+    expect(message).toContain(level === 'class' ? 'Forged' : 'Forged.get');
+    expect(message).toContain(what);
+    expect(message).toContain('upgrade @asenajs/asena-auth');
   });
 });

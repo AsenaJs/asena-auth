@@ -1,10 +1,10 @@
 import { describe, expect, mock, test } from 'bun:test';
-import { Protected, Public, Roles } from '@asenajs/asena/auth';
+import { AUTH_GUARD_CLASS_KEY, AUTH_GUARD_METHODS_KEY, Protected, Public, Roles } from '@asenajs/asena/auth';
 import { Controller, Middleware, Service } from '@asenajs/asena/decorators';
 import { Get, Post } from '@asenajs/asena/decorators/http';
 import { ComponentConstants } from '@asenajs/asena/ioc/constants';
 import { AsenaMiddlewareService } from '@asenajs/asena/middleware';
-import { getChainedTypedMetadata, getOwnTypedMetadata } from '@asenajs/asena/utils';
+import { defineTypedMetadata, getChainedTypedMetadata, getOwnTypedMetadata } from '@asenajs/asena/utils';
 import { AuthGuard, AuthGuardMiddleware } from '../lib/guard';
 import { AUTH_GUARD_MIDDLEWARE_NAME } from '../lib/types';
 
@@ -295,5 +295,68 @@ describe('AuthGuard.postProcess', () => {
     expect(own(C).list.middlewares).toEqual(firstMw);
     expect(own(C).list.middlewares).toEqual([AuthGuardMiddleware, Mw]);
     expect(guard.marks.size).toBe(1);
+  });
+});
+
+describe('AuthGuard fails closed on marks it does not understand', () => {
+  const forge = (level: 'class' | 'method', mark: Record<string, unknown>) => {
+    @Controller('/forged')
+    class Forged {
+      @Get('/')
+      list() {}
+    }
+
+    if (level === 'class') {
+      defineTypedMetadata(AUTH_GUARD_CLASS_KEY, mark, Forged);
+    } else {
+      defineTypedMetadata(AUTH_GUARD_METHODS_KEY, new Map([['list', mark]]), Forged);
+    }
+
+    return Forged;
+  };
+
+  test.each([
+    ['class', { access: 'restricted' }, "access 'restricted'"],
+    ['method', { access: 'restricted' }, "access 'restricted'"],
+    ['class', { access: 'protected', permissions: ['read'] }, "key 'permissions'"],
+    ['method', { access: 'protected', permissions: ['read'] }, "key 'permissions'"],
+  ] as const)(
+    '%s mark %j: the guard throws and logs instead of leaving the route public',
+    async (level, mark, what) => {
+      const Forged = forge(level, mark);
+      const { guard, logger } = makeGuard();
+      const where = level === 'class' ? 'Forged' : 'Forged.list';
+
+      expect(() => guard.postProcess(new Forged(), Forged)).toThrow(where);
+      expect(() => guard.postProcess(new Forged(), Forged)).toThrow(what);
+      expect(() => guard.postProcess(new Forged(), Forged)).toThrow('upgrade @asenajs/asena-auth');
+      expect(logger.error).toHaveBeenCalled();
+      expect(own(Forged).list?.middlewares ?? []).not.toContain(AuthGuardMiddleware);
+    },
+  );
+
+  test('marks from @Protected, @Public and @Roles, with or without a provider, pass', async () => {
+    @Protected({ provider: 'Native' })
+    @Controller('/ok')
+    class Ok {
+      @Roles('admin')
+      @Get('/a')
+      a() {}
+
+      @Public()
+      @Get('/b')
+      b() {}
+
+      @Protected()
+      @Get('/c')
+      c() {}
+    }
+
+    const { guard, logger } = makeGuard();
+
+    await guard.postProcess(new Ok(), Ok);
+
+    expect(logger.error).not.toHaveBeenCalled();
+    expect(guard.marks.size).toBe(2);
   });
 });
