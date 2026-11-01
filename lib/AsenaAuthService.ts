@@ -161,7 +161,10 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
     return this.toAuthSession(stored);
   }
 
-  /** The cookie token whose session `getSession(request)` slid, so the caller can re-issue the cookie; else `null`. */
+  /**
+   * The cookie token whose session `getSession(request)` slid, so the caller can re-issue the cookie; else `null`.
+   * @internal
+   */
   public slidCookieToken(request: Request): string | null {
     return this.slidCookies.get(request) ?? null;
   }

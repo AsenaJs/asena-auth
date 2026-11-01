@@ -27,7 +27,10 @@ export type GuardRouteMark = GuardMark & { controller: string; method: string };
  */
 @PostProcessor(AUTH_GUARD_NAME)
 export class AuthGuard implements ComponentPostProcessor {
-  /** Protected routes by `METHOD /normalized/path`; validated by `AuthProviderRegistry` at boot. */
+  /**
+   * Protected routes by `METHOD /normalized/path`; validated by `AuthProviderRegistry` at boot.
+   * @internal
+   */
   public readonly marks = new Map<string, GuardRouteMark>();
 
   @Inject(ICoreServiceNames.SERVER_LOGGER)

@@ -5,11 +5,11 @@ export { Auth } from './lib/decorators';
 
 export { authComponents } from './lib/authComponents';
 
-export * from './lib/better-auth';
+export { BetterAuth, BetterAuthController, BetterAuthService } from './lib/better-auth';
 
-export * from './lib/guard';
+export { AuthGuard, AuthGuardMiddleware, AuthProviderRegistry } from './lib/guard';
 
-export * from './lib/middleware';
+export { AuthSessionMiddleware, AuthWebSocketMiddleware } from './lib/middleware';
 
 export { MemoryAuthStore } from './lib/store';
 export type { AuthSessionStore, StoredSession } from './lib/store';

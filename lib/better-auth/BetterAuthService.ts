@@ -44,7 +44,10 @@ export abstract class BetterAuthService<TUser extends AuthUser = AuthUser> imple
     };
   }
 
-  /** The `Set-Cookie` values Better Auth answered `getSession(request)` with (e.g. a session refresh); else `[]`. */
+  /**
+   * The `Set-Cookie` values Better Auth answered `getSession(request)` with (e.g. a session refresh); else `[]`.
+   * @internal
+   */
   public responseCookies(request: Request): string[] {
     return this.setCookies.get(request) ?? [];
   }
