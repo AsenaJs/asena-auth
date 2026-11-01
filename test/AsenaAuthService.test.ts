@@ -641,6 +641,43 @@ describe('sessions', () => {
       await expect(auth.rotateSession(ctxFor(bearer('unknown')) as any)).rejects.toThrow('no session');
       expect(store.size).toBe(0);
     });
+
+    test('with loadUser, the new session carries the stored user, so a non-cloneable loaded user does not break it', async () => {
+      const store = new MemoryAuthStore();
+
+      @Auth({ store, loadUser: async (id) => ({ id, can: () => true }) as any })
+      class Orm extends AsenaAuthService {}
+
+      const auth = make(Orm);
+      const { token } = await auth.createSession({ id: 'u1', roles: ['user'] });
+      const next = await auth.rotateSession(ctxFor(bearer(token)) as any);
+      const fresh = (await auth.getSession(bearer(next)))!;
+
+      expect(typeof (fresh.user as any).can).toBe('function');
+      expect((await store.get(fresh.session.id))?.user).toEqual({ id: 'u1', roles: ['user'] });
+      expect(await auth.getSession(bearer(token))).toBeNull();
+    });
+
+    test('a failed create leaves the current session working', async () => {
+      const store = new MemoryAuthStore();
+
+      @Auth({ store })
+      class Rotating extends AsenaAuthService {}
+
+      const auth = make(Rotating);
+      const { token } = await auth.createSession({ id: 'u1' });
+
+      await expect(
+        auth.rotateSession(ctxFor(bearer(token)) as any, { id: 'u1', notify: () => {} } as any),
+      ).rejects.toThrow(TypeError);
+      expect(await auth.getSession(bearer(token))).not.toBeNull();
+
+      spyOn(store, 'create').mockRejectedValueOnce(new Error('store down'));
+
+      await expect(auth.rotateSession(ctxFor(bearer(token)) as any)).rejects.toThrow('store down');
+      expect(await auth.getSession(bearer(token))).not.toBeNull();
+      expect(store.size).toBe(1);
+    });
   });
 
   test('revokeSession kills one token, revokeUserSessions every token of the user', async () => {

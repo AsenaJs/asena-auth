@@ -140,44 +140,7 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
   }
 
   public async getSession(request: Request): Promise<AuthSession<TUser> | null> {
-    const read = this.readToken(request);
-
-    if (!read) {
-      return null;
-    }
-
-    const { token, fromCookie } = read;
-    const store = this.getStore();
-    const stored = await store.get(hashToken(token));
-    const now = Date.now();
-
-    if (!stored || !this.isLive(stored, now)) {
-      return null;
-    }
-
-    const loadUser = this.getOptions().loadUser;
-    const loaded = loadUser ? await loadUser(stored.userId) : undefined;
-
-    if (loaded === null) {
-      await store.delete(stored.id);
-
-      return null;
-    }
-
-    const ttlMs = this.ttlSeconds * 1000;
-    const expiresAt = Math.min(now + ttlMs, this.absoluteEnd(stored));
-
-    if (this.getOptions().sliding !== false && stored.expiresAt - now < ttlMs / 2 && expiresAt > stored.expiresAt) {
-      await store.touch(stored.id, expiresAt);
-
-      if (fromCookie) {
-        this.slidCookies.set(request, token);
-      }
-
-      return this.toAuthSession({ ...stored, expiresAt }, loaded);
-    }
-
-    return this.toAuthSession(stored, loaded);
+    return (await this.resolveStored(request))?.session ?? null;
   }
 
   /**
@@ -220,20 +183,21 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
   /**
    * Replaces the request's session (e.g. after a privilege change) and returns the new token; the cookie is
    * re-issued when the old token came from it. Rotation is a fresh authentication: `createdAt` is now, so
-   * `absoluteTtl` restarts. Throws when the request has no session.
+   * `absoluteTtl` restarts. Without `user` the new session stores the current one's stored user (not the
+   * `loadUser` result). The old session ends only once the new one exists. Throws when the request has no session.
    */
   public async rotateSession(ctx: AsenaContext<any, any>, user?: TUser): Promise<string> {
     const request = getRawRequest(ctx);
     const read = this.readToken(request);
-    const current = read && (await this.getSession(request));
+    const current = read && (await this.resolveStored(request));
 
     if (!current) {
       throw new Error(`${this.constructor.name}.rotateSession: the request has no session to rotate.`);
     }
 
-    await this.revokeSessionById(current.session.id);
+    const { token } = await this.createSession(user ?? current.stored.user);
 
-    const { token } = await this.createSession(user ?? current.user);
+    await this.revokeSessionById(current.stored.id);
 
     if (read.fromCookie) {
       await applySessionCookie(ctx, this, token);
@@ -280,6 +244,49 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
 
   private get ttlSeconds(): number {
     return this.getOptions().sessionTtl ?? DEFAULT_TTL_SECONDS;
+  }
+
+  private async resolveStored(
+    request: Request,
+  ): Promise<{ stored: StoredSession<TUser>; session: AuthSession<TUser> } | null> {
+    const read = this.readToken(request);
+
+    if (!read) {
+      return null;
+    }
+
+    const { token, fromCookie } = read;
+    const store = this.getStore();
+    const stored = await store.get(hashToken(token));
+    const now = Date.now();
+
+    if (!stored || !this.isLive(stored, now)) {
+      return null;
+    }
+
+    const loadUser = this.getOptions().loadUser;
+    const loaded = loadUser ? await loadUser(stored.userId) : undefined;
+
+    if (loaded === null) {
+      await store.delete(stored.id);
+
+      return null;
+    }
+
+    const ttlMs = this.ttlSeconds * 1000;
+    const expiresAt = Math.min(now + ttlMs, this.absoluteEnd(stored));
+
+    if (this.getOptions().sliding !== false && stored.expiresAt - now < ttlMs / 2 && expiresAt > stored.expiresAt) {
+      await store.touch(stored.id, expiresAt);
+
+      if (fromCookie) {
+        this.slidCookies.set(request, token);
+      }
+
+      return { stored, session: this.toAuthSession({ ...stored, expiresAt }, loaded) };
+    }
+
+    return { stored, session: this.toAuthSession(stored, loaded) };
   }
 
   private absoluteEnd(stored: StoredSession<TUser>): number {
