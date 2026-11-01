@@ -128,6 +128,11 @@ class Login {
 
     return ctx.send({ ok: true });
   }
+
+  @Post('/rotate')
+  async rotate(ctx: any) {
+    return ctx.send({ token: await this.auth.rotateSession(ctx) });
+  }
 }
 
 @Protected()
@@ -427,6 +432,37 @@ describe.each(adapters)('asena-auth end to end on $name', ({ name, make, routes 
     });
 
     expect(viaProtocol.opened).toBe(true);
+  });
+
+  test('rotateSession: the old token is 401 at once, the new one works; only a cookie session gets a cookie', async () => {
+    await using app = await boot();
+    const rotate = async (headers: Record<string, string>) => {
+      const res = await fetch(`${app.baseUrl}/auth/rotate`, { method: 'POST', headers });
+
+      expect(res.status).toBe(200);
+
+      return { setCookies: res.headers.getSetCookie(), token: ((await res.json()) as { token: string }).token };
+    };
+
+    const viaBearer = (await login(app)).token;
+    const fromBearer = await rotate(bearer(viaBearer));
+
+    expect(fromBearer.setCookies).toEqual([]);
+    expect((await fetch(`${app.baseUrl}/me`, { headers: bearer(viaBearer) })).status).toBe(401);
+    expect((await fetch(`${app.baseUrl}/me`, { headers: bearer(fromBearer.token) })).status).toBe(200);
+
+    const viaCookie = (await login(app)).token;
+    const fromCookie = await rotate({ cookie: `asena_session=${viaCookie}` });
+    const reissued = Bun.Cookie.parse(fromCookie.setCookies[0] ?? '');
+
+    expect(fromCookie.setCookies).toHaveLength(1);
+    expect(reissued.name).toBe('asena_session');
+    expect(reissued.value).toBe(fromCookie.token);
+    expect(reissued.httpOnly).toBe(true);
+    expect((await fetch(`${app.baseUrl}/me`, { headers: { cookie: `asena_session=${viaCookie}` } })).status).toBe(401);
+    expect(
+      (await fetch(`${app.baseUrl}/me`, { headers: { cookie: `asena_session=${fromCookie.token}` } })).status,
+    ).toBe(200);
   });
 
   test('order: the guard rejects before the route middleware and the validator ever run', async () => {

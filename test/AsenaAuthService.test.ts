@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, setSystemTime, spyOn, test } from 'bun:test';
+import { afterEach, describe, expect, mock, setSystemTime, spyOn, test } from 'bun:test';
 import { AUTH_PROVIDER_KEY } from '@asenajs/asena/auth';
 import type { AuthSession } from '@asenajs/asena/auth';
 import { ComponentConstants } from '@asenajs/asena/ioc/constants';
@@ -505,6 +505,71 @@ describe('sessions', () => {
 
       expect(await byDefault.auth.getSession(send(byDefault.token, { headers }))).toBeNull();
       expect(await off.auth.getSession(send(off.token, { headers }))).not.toBeNull();
+    });
+  });
+
+  describe('rotateSession', () => {
+    const ctxFor = (request: Request) => ({ req: request, setCookie: mock(async () => {}) });
+
+    test('replaces the current session: the old token stops working, the new one is a fresh session', async () => {
+      @Auth({ sessionTtl: 60, absoluteTtl: 100 })
+      class Rotating extends AsenaAuthService {}
+
+      const auth = make(Rotating);
+      const { token, session } = await auth.createSession({ id: 'u1', roles: ['user'] });
+      const rotatedAt = session.session.createdAt.getTime() + 50_000;
+
+      setSystemTime(new Date(rotatedAt));
+
+      const ctx = ctxFor(bearer(token));
+      const next = await auth.rotateSession(ctx as any);
+
+      expect(next).not.toBe(token);
+      expect(await auth.getSession(bearer(token))).toBeNull();
+
+      const fresh = (await auth.getSession(bearer(next)))!;
+
+      expect(fresh.user).toEqual({ id: 'u1', roles: ['user'] });
+      expect(fresh.session.createdAt.getTime()).toBe(rotatedAt);
+      expect(ctx.setCookie).not.toHaveBeenCalled();
+
+      setSystemTime(new Date(rotatedAt + 59_000));
+
+      expect(await auth.getSession(bearer(next))).not.toBeNull();
+    });
+
+    test('a given user replaces the session user', async () => {
+      const auth = make(AppAuth);
+      const { token } = await auth.createSession({ id: 'u1', roles: ['user'] });
+      const next = await auth.rotateSession(ctxFor(bearer(token)) as any, { id: 'u1', roles: ['admin'] });
+
+      expect((await auth.getSession(bearer(next)))?.user).toEqual({ id: 'u1', roles: ['admin'] });
+    });
+
+    test('a cookie session gets the new token as its cookie', async () => {
+      const auth = make(AppAuth);
+      const { token } = await auth.createSession({ id: 'u1' });
+      const ctx = ctxFor(cookie(token));
+      const next = await auth.rotateSession(ctx as any);
+
+      expect(ctx.setCookie).toHaveBeenCalledTimes(1);
+      expect(ctx.setCookie).toHaveBeenCalledWith('asena_session', next, { extraOptions: auth.cookieOptions });
+      expect(await auth.getSession(cookie(token))).toBeNull();
+    });
+
+    test('without a current session it throws and creates nothing', async () => {
+      const store = new MemoryAuthStore();
+
+      @Auth({ store })
+      class Rotating extends AsenaAuthService {}
+
+      const auth = make(Rotating);
+
+      await expect(auth.rotateSession(ctxFor(new Request(URL_)) as any)).rejects.toThrow(
+        'Rotating.rotateSession: the request has no session',
+      );
+      await expect(auth.rotateSession(ctxFor(bearer('unknown')) as any)).rejects.toThrow('no session');
+      expect(store.size).toBe(0);
     });
   });
 

@@ -2,7 +2,7 @@ import type { AsenaContext } from '@asenajs/asena/adapter';
 import { OnStart, OnStop } from '@asenajs/asena/decorators/ioc';
 import type { AsenaAuthProvider, AuthSession, AuthUser } from '@asenajs/asena/auth';
 import { generateToken, hashPassword, hashToken, verifyPassword } from './crypto';
-import { clearSessionCookie, getRawRequest } from './helpers/context';
+import { applySessionCookie, clearSessionCookie, getRawRequest } from './helpers/context';
 import { defaultRolesResolver } from './helpers/roles';
 import type { AuthSessionStore, StoredSession } from './store';
 import type { AuthOptions } from './types';
@@ -206,6 +206,31 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
     }
 
     await clearSessionCookie(ctx, this);
+  }
+
+  /**
+   * Replaces the request's session (e.g. after a privilege change) and returns the new token; the cookie is
+   * re-issued when the old token came from it. Rotation is a fresh authentication: `createdAt` is now, so
+   * `absoluteTtl` restarts. Throws when the request has no session.
+   */
+  public async rotateSession(ctx: AsenaContext<any, any>, user?: TUser): Promise<string> {
+    const request = getRawRequest(ctx);
+    const read = this.readToken(request);
+    const current = read && (await this.getSession(request));
+
+    if (!current) {
+      throw new Error(`${this.constructor.name}.rotateSession: the request has no session to rotate.`);
+    }
+
+    await this.revokeSessionById(current.session.id);
+
+    const { token } = await this.createSession(user ?? current.user);
+
+    if (read.fromCookie) {
+      await applySessionCookie(ctx, this, token);
+    }
+
+    return token;
   }
 
   /** The user's unexpired sessions. Needs a store implementing `listByUser`. */
