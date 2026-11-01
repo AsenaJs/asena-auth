@@ -9,7 +9,7 @@ const DEFAULT_TTL_SECONDS = 604_800;
 const DEFAULT_COOKIE_NAME = 'asena_session';
 
 // Core 0.12 constructs an @Implements singleton twice, so a shared store would otherwise start and stop twice.
-const storeUsers = new WeakMap<AuthSessionStore<any>, number>();
+const storeUsers = new WeakMap<AuthSessionStore<any>, { users: number; started: Promise<void> }>();
 
 export interface SessionCookieOptions {
   httpOnly: true;
@@ -45,33 +45,44 @@ export abstract class AsenaAuthService<TUser extends AuthUser = AuthUser> implem
       return;
     }
 
-    const users = storeUsers.get(this.store) ?? 0;
+    const store = this.store;
+    let entry = storeUsers.get(store);
 
-    if (users === 0) {
-      await this.store.onStart?.();
+    if (!entry) {
+      entry = { users: 0, started: (async () => store.onStart?.())() };
+      storeUsers.set(store, entry);
     }
 
-    storeUsers.set(this.store, users + 1);
-    this.startedStore = this.store;
+    entry.users++;
+    this.startedStore = store;
+
+    try {
+      await entry.started;
+    } catch (error) {
+      this.startedStore = null;
+
+      if (--entry.users === 0 && storeUsers.get(store) === entry) {
+        storeUsers.delete(store);
+      }
+
+      throw error;
+    }
   }
 
   @OnStop()
   public async onStop(): Promise<void> {
     const store = this.startedStore;
-
-    if (!store) {
-      return;
-    }
+    const entry = store && storeUsers.get(store);
 
     this.startedStore = null;
 
-    const users = (storeUsers.get(store) ?? 1) - 1;
-
-    storeUsers.set(store, users);
-
-    if (users === 0) {
-      await store.onStop?.();
+    if (!store || !entry || --entry.users > 0) {
+      return;
     }
+
+    storeUsers.delete(store);
+    await entry.started;
+    await store.onStop?.();
   }
 
   public get primary(): boolean {

@@ -386,6 +386,104 @@ describe('sessions', () => {
 
     expect(stop).toHaveBeenCalledTimes(1);
   });
+
+  test('two providers starting a shared async store concurrently start it once and both wait for it', async () => {
+    const events: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const store = new MemoryAuthStore();
+
+    store.onStart = async () => {
+      events.push('store:start');
+      await gate;
+      events.push('store:started');
+    };
+    store.onStop = async () => {
+      events.push('store:stop');
+    };
+
+    @Auth({ store })
+    class First extends AsenaAuthService {}
+
+    @Auth({ store })
+    class Second extends AsenaAuthService {}
+
+    const first = make(First);
+    const second = make(Second);
+    const starting = Promise.all([
+      first.onStart().then(() => events.push('first:ready')),
+      second.onStart().then(() => events.push('second:ready')),
+    ]);
+
+    await Bun.sleep(1);
+    release();
+    await starting;
+
+    expect(events).toEqual(['store:start', 'store:started', 'first:ready', 'second:ready']);
+
+    await first.onStop();
+
+    expect(events).not.toContain('store:stop');
+
+    await second.onStop();
+
+    expect(events.filter((e) => e === 'store:stop')).toHaveLength(1);
+  });
+
+  test('a store whose start failed is started again by the next onStart, and a failed provider never stops it', async () => {
+    const store = new MemoryAuthStore();
+    const start = spyOn(store, 'onStart').mockImplementationOnce(() => {
+      throw new Error('store down');
+    });
+    const stop = spyOn(store, 'onStop');
+
+    @Auth({ store })
+    class Retry extends AsenaAuthService {}
+
+    const auth = make(Retry);
+
+    await expect(auth.onStart()).rejects.toThrow('store down');
+    await auth.onStop();
+
+    expect(stop).not.toHaveBeenCalled();
+
+    await auth.onStart();
+    await auth.onStop();
+
+    expect(start).toHaveBeenCalledTimes(2);
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  test('concurrent stops of two providers stop the shared store once', async () => {
+    const store = new MemoryAuthStore();
+    const start = spyOn(store, 'onStart');
+    const stop = spyOn(store, 'onStop');
+
+    @Auth({ store })
+    class First extends AsenaAuthService {}
+
+    @Auth({ store })
+    class Second extends AsenaAuthService {}
+
+    const first = make(First);
+    const second = make(Second);
+
+    await Promise.all([first.onStart(), second.onStart()]);
+    await Promise.all([first.onStop(), second.onStop()]);
+
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(stop).toHaveBeenCalledTimes(1);
+
+    await first.onStart();
+
+    expect(start).toHaveBeenCalledTimes(2);
+
+    await first.onStop();
+
+    expect(stop).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('cookie options', () => {
