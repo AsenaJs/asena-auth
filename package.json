@@ -1,0 +1,98 @@
+{
+  "name": "@asenajs/asena-auth",
+  "version": "0.0.0",
+  "author": "LibirSoft",
+  "description": "Authentication for AsenaJS - native opaque sessions and Better Auth behind the @asenajs/asena/auth contract, with route guards enforced before validators",
+  "main": "dist/index.js",
+  "module": "index.ts",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "import": "./dist/testing.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "license": "MIT",
+  "engines": {
+    "bun": ">=1.4.0"
+  },
+  "keywords": [
+    "auth",
+    "authentication",
+    "session",
+    "better-auth",
+    "asena",
+    "asenajs",
+    "bun",
+    "ioc",
+    "dependency-injection"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AsenaJs/auth.git"
+  },
+  "bugs": {
+    "url": "https://github.com/AsenaJs/auth/issues"
+  },
+  "homepage": "https://asena.sh",
+  "scripts": {
+    "test": "bun test",
+    "test:watch": "bun test --watch",
+    "test:coverage": "bun test --coverage",
+    "build": "bun run clean && tsc",
+    "typecheck": "tsc -p tsconfig.typecheck.json",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "bun run build",
+    "changeset": "changeset",
+    "version": "changeset version",
+    "release": "bun run build && changeset publish",
+    "lint": "eslint . --ext .ts",
+    "lint:fix": "eslint . --ext .ts --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "bun run lint && bun run format:check",
+    "check:fix": "bun run lint:fix && bun run format"
+  },
+  "devDependencies": {
+    "@asenajs/asena": "^0.12.2",
+    "@asenajs/ergenecore": "^5.0.1",
+    "@asenajs/hono-adapter": "^5.0.2",
+    "@changesets/cli": "^2.31.1",
+    "@types/bun": "latest",
+    "@typescript-eslint/eslint-plugin": "^6.21.0",
+    "better-auth": "^1.7.14",
+    "eslint": "^8.57.1",
+    "eslint-config-alloy": "^5.1.2",
+    "eslint-config-prettier": "^9.1.2",
+    "eslint-plugin-alloy": "^1.2.1",
+    "eslint-plugin-import": "^2.32.0",
+    "eslint-plugin-n": "^16.6.2",
+    "eslint-plugin-prettier": "^5.5.6",
+    "eslint-plugin-promise": "^6.6.0",
+    "hono": ">=4.12.9",
+    "prettier": "^3.9.6",
+    "reflect-metadata": "^0.2.2",
+    "typescript": "^5.9.3",
+    "zod": "^4.3.6"
+  },
+  "peerDependencies": {
+    "@asenajs/asena": "^0.12.2",
+    "better-auth": ">=1.2.0 <2",
+    "reflect-metadata": "^0.2.2",
+    "typescript": "^5.9.3"
+  },
+  "peerDependenciesMeta": {
+    "better-auth": {
+      "optional": true
+    }
+  }
+}
