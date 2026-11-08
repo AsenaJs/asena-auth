@@ -34,6 +34,17 @@ adapter runs on the `plain` shape.
 Until the suite cases are deleted (stage 3) they stay in place, still on the real adapters, so `bun test` keeps
 running all 367.
 
+## Where the cases run
+
+- `auth/unit` cases are where they were, unchanged.
+- `auth/fake` cases keep their file and test name. A describe that was `... on $name` / `... on %s` over the adapters
+  is now `... on the %s context` over `contextShapes`; a describe titled `... on ergenecore` lost the suffix
+  (`guard`, `session and WebSocket middlewares`, `boot errors`). They boot with `bootFake(...)` and call `app.fetch(path)`
+  and `app.connect(path)` instead of `fetch(app.baseUrl + path)` and a real socket; a rejected upgrade is
+  `{ opened: false, status }`, so those cases now also assert the 401.
+- `suite/...` cases are in their original describe on the real adapters, alone or next to fixtures only they use
+  (`GuardIntegration` `ItemCreation`, the `adapterRoutes` builder in `Integration`).
+
 ## AsenaAuthService.test.ts (69 runs)
 
 | Test | Runs | Proves | Destination |
