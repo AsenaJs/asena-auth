@@ -7,6 +7,7 @@ import { defineTypedMetadata } from '@asenajs/asena/utils';
 import { createErgenecoreAdapter } from '@asenajs/ergenecore';
 import { createHonoAdapter } from '@asenajs/hono-adapter';
 import { AsenaAuthService, Auth, AuthGuard, AuthGuardMiddleware, AuthProviderRegistry } from '../index';
+import { bootFake, contextShapes } from './support/fakeAdapter';
 
 @Auth({})
 class MarkAuth extends AsenaAuthService {}
@@ -62,7 +63,9 @@ describe.each(adapters)('guard marks at boot on $name', ({ make }) => {
     expect(messages.join(' <- ')).toContain(what);
     expect(messages.join(' <- ')).toContain('upgrade @asenajs/asena-auth');
   });
+});
 
+describe.each(contextShapes)('guard marks at boot on the %s context', (shape) => {
   test('@Protected({ provider: undefined }) boots and guards like @Protected()', async () => {
     @Protected({ provider: undefined })
     @Controller('/plain')
@@ -73,11 +76,15 @@ describe.each(adapters)('guard marks at boot on $name', ({ make }) => {
       }
     }
 
-    await using app = await boot([MarkAuth, Plain]);
+    await using app = await bootFake({
+      shape,
+      components: [MarkAuth, Plain],
+      imports: [AuthGuard, AuthGuardMiddleware, AuthProviderRegistry],
+    });
     const auth = await app.resolve<MarkAuth>('MarkAuth');
     const { token } = await auth.createSession({ id: 'u1' });
 
-    expect((await fetch(`${app.baseUrl}/plain`)).status).toBe(401);
-    expect((await fetch(`${app.baseUrl}/plain`, { headers: { authorization: `Bearer ${token}` } })).status).toBe(200);
+    expect((await app.fetch('/plain')).status).toBe(401);
+    expect((await app.fetch('/plain', { headers: { authorization: `Bearer ${token}` } })).status).toBe(200);
   });
 });

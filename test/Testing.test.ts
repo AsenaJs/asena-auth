@@ -2,13 +2,11 @@ import { describe, expect, test } from 'bun:test';
 import { Protected, Roles, getAuthSession } from '@asenajs/asena/auth';
 import { Controller, WebSocket as WebSocketNamespace } from '@asenajs/asena/decorators';
 import { Get } from '@asenajs/asena/decorators/http';
-import { createTestApp, createWebTest, silentLogger } from '@asenajs/asena/test';
+import { createWebTest, silentLogger } from '@asenajs/asena/test';
 import { AsenaWebSocketService } from '@asenajs/asena/web-socket';
-import { createErgenecoreAdapter } from '@asenajs/ergenecore';
-import { createHonoAdapter } from '@asenajs/hono-adapter';
 import { AuthWebSocketMiddleware, authComponents } from '../index';
 import { TestAuth, TestAuthProvider } from '../testing';
-import { connect } from './wsClient';
+import { FakeAdapter, bootFake, contextShapes } from './support/fakeAdapter';
 
 const users = {
   ada: { id: 'u1', roles: ['admin'] },
@@ -33,37 +31,36 @@ class Me {
   }
 }
 
-const adapters = [
-  { name: 'ergenecore', make: () => createErgenecoreAdapter({ logger: silentLogger }) },
-  { name: 'hono', make: () => createHonoAdapter({ logger: silentLogger })[0] },
-];
-
-describe.each(adapters)('TestAuthProvider under createWebTest on $name', ({ make }) => {
+describe.each(contextShapes)('TestAuthProvider under createWebTest on the %s context', (shape) => {
   test('the x-test-user header alone drives @Protected and @Roles', async () => {
+    const adapter = new FakeAdapter(shape);
     const { app } = await createWebTest({
-      adapter: make(),
+      adapter,
       logger: silentLogger,
       controllers: [Me],
       components: [...authComponents, AppTestAuth],
     });
+    const as = async (path: string, user?: string) =>
+      adapter.fetch(path, { headers: user === undefined ? {} : { 'x-test-user': user } });
 
     try {
-      await app.get('/me').expectStatus(401);
-      await app.get('/me', { headers: { 'x-test-user': 'nobody' } }).expectStatus(401);
-      await app.get('/me', { headers: { 'x-test-user': 'constructor' } }).expectStatus(401);
-      await app
-        .get('/me', { headers: { 'x-test-user': 'ada' } })
-        .expectStatus(200)
-        .expectJson({ user: 'u1' });
-      await app.get('/me/admin', { headers: { 'x-test-user': 'ada' } }).expectStatus(200);
-      await app.get('/me/admin', { headers: { 'x-test-user': 'bob' } }).expectStatus(403);
+      expect((await as('/me')).status).toBe(401);
+      expect((await as('/me', 'nobody')).status).toBe(401);
+      expect((await as('/me', 'constructor')).status).toBe(401);
+
+      const ada = await as('/me', 'ada');
+
+      expect(ada.status).toBe(200);
+      expect(await ada.json()).toEqual({ user: 'u1' });
+      expect((await as('/me/admin', 'ada')).status).toBe(200);
+      expect((await as('/me/admin', 'bob')).status).toBe(403);
     } finally {
       await app.stop();
     }
   });
 });
 
-describe.each(adapters)('TestAuthProvider under createTestApp on $name', ({ make }) => {
+describe.each(contextShapes)('TestAuthProvider under createTestApp on the %s context', (shape) => {
   @TestAuth({ users: { ada: users.ada }, primary: true })
   class PrimaryTestAuth extends TestAuthProvider {}
 
@@ -86,14 +83,13 @@ describe.each(adapters)('TestAuthProvider under createTestApp on $name', ({ make
     }
   }
 
-  const boot = (components: any[]) =>
-    createTestApp({ adapter: make() as any, logger: silentLogger, components, imports: [...authComponents] });
+  const boot = (components: any[]) => bootFake({ shape, components, imports: [...authComponents] });
 
   test('the header drives @Protected and @Roles routes', async () => {
     await using app = await boot([AppTestAuth, Me]);
-    const as = (key: string, path = '/me') => fetch(`${app.baseUrl}${path}`, { headers: { 'x-test-user': key } });
+    const as = (key: string, path = '/me') => app.fetch(path, { headers: { 'x-test-user': key } });
 
-    expect((await fetch(`${app.baseUrl}/me`)).status).toBe(401);
+    expect((await app.fetch('/me')).status).toBe(401);
     expect(await (await as('ada')).json()).toEqual({ user: 'u1' });
     expect((await as('ada', '/me/admin')).status).toBe(200);
     expect((await as('bob', '/me/admin')).status).toBe(403);
@@ -101,7 +97,7 @@ describe.each(adapters)('TestAuthProvider under createTestApp on $name', ({ make
 
   test('primary: true serves unnamed routes, name registers the provider a route can name', async () => {
     await using app = await boot([PrimaryTestAuth, PartnerTestAuth, Me, PartnerRoutes]);
-    const as = (key: string, path: string) => fetch(`${app.baseUrl}${path}`, { headers: { 'x-test-user': key } });
+    const as = (key: string, path: string) => app.fetch(path, { headers: { 'x-test-user': key } });
 
     expect(await (await as('ada', '/me')).json()).toEqual({ user: 'u1' });
     expect((await as('bob', '/me')).status).toBe(401);
@@ -112,7 +108,7 @@ describe.each(adapters)('TestAuthProvider under createTestApp on $name', ({ make
   test('a WebSocket route behind AuthWebSocketMiddleware opens for a known header only', async () => {
     await using app = await boot([AppTestAuth, Chat]);
 
-    const opened = await connect(app.wsUrl('/chat'), { headers: { 'x-test-user': 'ada' } });
+    const opened = await app.connect('/chat', { headers: { 'x-test-user': 'ada' } });
 
     expect(opened.opened).toBe(true);
 
@@ -120,8 +116,11 @@ describe.each(adapters)('TestAuthProvider under createTestApp on $name', ({ make
       expect(opened.message.authSession.user.id).toBe('u1');
     }
 
-    expect(await connect(app.wsUrl('/chat'), { headers: { 'x-test-user': 'nobody' } })).toEqual({ opened: false });
-    expect(await connect(app.wsUrl('/chat'))).toEqual({ opened: false });
+    expect(await app.connect('/chat', { headers: { 'x-test-user': 'nobody' } })).toEqual({
+      opened: false,
+      status: 401,
+    });
+    expect(await app.connect('/chat')).toEqual({ opened: false, status: 401 });
   });
 });
 
