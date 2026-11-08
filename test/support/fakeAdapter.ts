@@ -4,9 +4,6 @@ import type {
   BaseMiddleware,
   BaseValidator,
   CookieExtra,
-  ErrorHandler,
-  InputTarget,
-  NotFoundHandler,
   RequestSchema,
   RouteParams,
   SendOptions,
@@ -181,32 +178,6 @@ export class FakeContext implements AsenaContext<any, Response> {
 
   public streamText = (): Response => unsupported('streaming');
 
-  public async readInput(target: InputTarget): Promise<unknown> {
-    switch (target) {
-      case 'body':
-        return this.getBody().catch(() => undefined);
-
-      case 'form': {
-        const form: Record<string, unknown> = {};
-
-        (await this.getFormData()).forEach((value, key) => {
-          form[key] = value;
-        });
-
-        return form;
-      }
-
-      case 'query':
-        return this.getAllQueries();
-
-      case 'params':
-        return { ...this.params };
-
-      case 'headers':
-        return { ...this.headers };
-    }
-  }
-
   private get url(): URL {
     return new URL(this.request.url);
   }
@@ -236,19 +207,12 @@ class FakeSocket {
   public close(): void {}
 }
 
-const VALIDATOR_TARGETS: [keyof BaseValidator, InputTarget][] = [
-  ['json', 'body'],
-  ['form', 'form'],
-  ['query', 'query'],
-  ['param', 'params'],
-  ['header', 'headers'],
-];
-
 /**
  * An adapter built from `@asenajs/asena/adapter` only and driven in process: {@link FakeAdapter.fetch} answers
  * a `Request` without a server, {@link FakeAdapter.connect} runs a WebSocket upgrade and the namespace's `onOpen`
- * against a socket that records what it is sent. Global middlewares, then route middlewares, then the
- * validator, then the handler; every cookie written is on the response, an error response included.
+ * against a socket that records what it is sent. Global middlewares, then route middlewares, then a `json()`
+ * validator, then the handler; every cookie written is on the response, an error response included. Anything
+ * else the contract allows throws, so no test passes on a feature the fake only pretends to have.
  */
 export class FakeAdapter extends AsenaAdapter<FakeContext, RequestSchema> {
   public readonly name = 'fake';
@@ -258,10 +222,6 @@ export class FakeAdapter extends AsenaAdapter<FakeContext, RequestSchema> {
   private readonly routes: FakeRoute[] = [];
 
   private readonly sockets: WebsocketRouteParams<FakeContext>[] = [];
-
-  private errorHandler: ErrorHandler<FakeContext> | undefined;
-
-  private notFoundHandler: NotFoundHandler<FakeContext> | undefined;
 
   private socketCount = 0;
 
@@ -301,12 +261,8 @@ export class FakeAdapter extends AsenaAdapter<FakeContext, RequestSchema> {
     return { port: 0, stop: async () => {} } as unknown as Server<any>;
   }
 
-  public onError(errorHandler: ErrorHandler<FakeContext>): void {
-    this.errorHandler = errorHandler;
-  }
-
-  public onNotFound(notFoundHandler: NotFoundHandler<FakeContext>): void {
-    this.notFoundHandler = notFoundHandler;
+  public onError(): void {
+    unsupported('onError handlers');
   }
 
   public serveOptions(): void {}
@@ -319,9 +275,7 @@ export class FakeAdapter extends AsenaAdapter<FakeContext, RequestSchema> {
     const found = this.findRoute(request.method, pathname);
 
     if (!found) {
-      return this.notFoundHandler
-        ? this.notFoundHandler(this.context(request, '', {}), { path: pathname, method: request.method })
-        : new Response('Not Found', { status: 404 });
+      return new Response('Not Found', { status: 404 });
     }
 
     const { route, params } = found;
@@ -341,7 +295,7 @@ export class FakeAdapter extends AsenaAdapter<FakeContext, RequestSchema> {
         return result;
       }))!;
     } catch (error) {
-      response = await this.errorResponse(error, ctx);
+      response = this.errorResponse(error);
     }
 
     const headers = new Headers(response.headers);
@@ -380,7 +334,7 @@ export class FakeAdapter extends AsenaAdapter<FakeContext, RequestSchema> {
     try {
       rejection = await this.runChain(ctx, [...this.globalMiddlewares, ...route.middlewares], async () => undefined);
     } catch (error) {
-      rejection = await this.errorResponse(error, ctx);
+      rejection = this.errorResponse(error);
     }
 
     if (rejection) {
@@ -455,25 +409,23 @@ export class FakeAdapter extends AsenaAdapter<FakeContext, RequestSchema> {
   }
 
   private async validate(ctx: FakeContext, validator: BaseValidator<RequestSchema> | undefined): Promise<void> {
-    for (const [method, target] of VALIDATOR_TARGETS) {
-      const handler = validator?.[method];
+    const { json, ...others } = validator ?? {};
 
-      if (handler) {
-        const schema = await handler.handle();
-        const result = await schema['~standard'].validate(await ctx.readInput(target));
+    if (Object.keys(others).length > 0) {
+      unsupported('validators other than json()');
+    }
 
-        if (result.issues) {
-          throw new ContractValidationError(target, result.issues);
-        }
+    if (json) {
+      const schema = await json.handle();
+      const result = await schema['~standard'].validate(await ctx.getBody().catch(() => undefined));
+
+      if (result.issues) {
+        throw new ContractValidationError('body', result.issues);
       }
     }
   }
 
-  private async errorResponse(error: unknown, ctx: FakeContext): Promise<Response> {
-    if (this.errorHandler) {
-      return this.errorHandler(error as Error, ctx);
-    }
-
+  private errorResponse(error: unknown): Response {
     return isHttpException(error)
       ? (error.getResponse?.() ?? new Response(error.message, { status: error.status }))
       : new Response('Internal Server Error', { status: 500 });
