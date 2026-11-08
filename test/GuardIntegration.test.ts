@@ -5,11 +5,11 @@ import { Get, Post } from '@asenajs/asena/decorators/http';
 import { AsenaMiddlewareService } from '@asenajs/asena/middleware';
 import { createTestApp, silentLogger } from '@asenajs/asena/test';
 import { ValidationService, createErgenecoreAdapter } from '@asenajs/ergenecore';
-import { createHonoAdapter } from '@asenajs/hono-adapter';
 import { z } from 'zod';
 import { AsenaAuthService } from '../lib/AsenaAuthService';
 import { Auth } from '../lib/decorators';
 import { AuthGuard, AuthGuardMiddleware, AuthProviderRegistry } from '../lib/guard';
+import { bootFake, contextShapes } from './support/fakeAdapter';
 
 const calls: string[] = [];
 
@@ -41,13 +41,6 @@ class Items {
     return ctx.send({ user: getAuthSession(ctx)?.user.id });
   }
 
-  @Post({ path: '/', validator: ItemValidator, middlewares: [Recorder] })
-  create(ctx: any) {
-    calls.push('handler');
-
-    return ctx.send({ ok: true });
-  }
-
   @Public()
   @Get('/public')
   open(ctx: any) {
@@ -58,6 +51,17 @@ class Items {
   @Get('/admin')
   admin(ctx: any) {
     return ctx.send({ admin: true });
+  }
+}
+
+@Protected()
+@Controller('/items')
+class ItemCreation {
+  @Post({ path: '/', validator: ItemValidator, middlewares: [Recorder] })
+  create(ctx: any) {
+    calls.push('handler');
+
+    return ctx.send({ ok: true });
   }
 }
 
@@ -78,15 +82,9 @@ afterEach(() => {
   calls.length = 0;
 });
 
-const boot = () =>
-  createTestApp({
-    adapter: createErgenecoreAdapter({ logger: silentLogger }),
-    logger: silentLogger,
-    components: [AppAuth, ItemValidator, Recorder, Items, Users, OpenUsers],
-    imports: [AuthGuard, AuthGuardMiddleware, AuthProviderRegistry],
-  });
+const guardImports = [AuthGuard, AuthGuardMiddleware, AuthProviderRegistry];
 
-const tokenFor = async (app: Awaited<ReturnType<typeof boot>>, roles: string[] = []) => {
+const tokenFor = async (app: { resolve: <T>(name: string) => Promise<T> }, roles: string[] = []) => {
   const auth = await app.resolve<AppAuth>('AppAuth');
 
   return (await auth.createSession({ id: 'u1', roles })).token;
@@ -95,17 +93,13 @@ const tokenFor = async (app: Awaited<ReturnType<typeof boot>>, roles: string[] =
 const auth = (token: string) => ({ authorization: `Bearer ${token}` });
 
 describe('guard on ergenecore', () => {
-  test('401 anonymous, 200 with a Bearer token, the session reaches the handler', async () => {
-    await using app = await boot();
-    const token = await tokenFor(app);
-
-    expect((await fetch(`${app.baseUrl}/items`)).status).toBe(401);
-
-    const res = await fetch(`${app.baseUrl}/items`, { headers: auth(token) });
-
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ user: 'u1' });
-  });
+  const boot = () =>
+    createTestApp({
+      adapter: createErgenecoreAdapter({ logger: silentLogger }),
+      logger: silentLogger,
+      components: [AppAuth, ItemValidator, Recorder, ItemCreation],
+      imports: guardImports,
+    });
 
   test('an anonymous request never reaches the route middlewares, the validator or the handler', async () => {
     await using app = await boot();
@@ -133,49 +127,52 @@ describe('guard on ergenecore', () => {
     expect(res.status).toBe(200);
     expect(calls).toEqual(['recorder', 'validator', 'handler']);
   });
+});
+
+describe('guard', () => {
+  const boot = () => bootFake({ components: [AppAuth, Items, Users, OpenUsers], imports: guardImports });
+
+  test('401 anonymous, 200 with a Bearer token, the session reaches the handler', async () => {
+    await using app = await boot();
+    const token = await tokenFor(app);
+
+    expect((await app.fetch('/items')).status).toBe(401);
+
+    const res = await app.fetch('/items', { headers: auth(token) });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ user: 'u1' });
+  });
 
   test('@Public method on a @Protected controller is open', async () => {
     await using app = await boot();
 
-    expect((await fetch(`${app.baseUrl}/items/public`)).status).toBe(200);
+    expect((await app.fetch('/items/public')).status).toBe(200);
   });
 
   test('@Roles: 403 without the role, 200 with it', async () => {
     await using app = await boot();
 
-    expect((await fetch(`${app.baseUrl}/items/admin`, { headers: auth(await tokenFor(app, ['user'])) })).status).toBe(
-      403,
-    );
-    expect((await fetch(`${app.baseUrl}/items/admin`, { headers: auth(await tokenFor(app, ['admin'])) })).status).toBe(
-      200,
-    );
+    expect((await app.fetch('/items/admin', { headers: auth(await tokenFor(app, ['user'])) })).status).toBe(403);
+    expect((await app.fetch('/items/admin', { headers: auth(await tokenFor(app, ['admin'])) })).status).toBe(200);
   });
 
   test('HEAD on a protected GET route is guarded, not a 500', async () => {
     await using app = await boot();
 
-    expect((await fetch(`${app.baseUrl}/items`, { method: 'HEAD' })).status).toBe(401);
+    expect((await app.fetch('/items', { method: 'HEAD' })).status).toBe(401);
   });
 
   test('@Public subclass of a @Protected controller is open while the base stays guarded', async () => {
     await using app = await boot();
 
-    expect((await fetch(`${app.baseUrl}/users`)).status).toBe(401);
-    expect((await fetch(`${app.baseUrl}/open-users`)).status).toBe(200);
+    expect((await app.fetch('/users')).status).toBe(401);
+    expect((await app.fetch('/open-users')).status).toBe(200);
   });
 });
 
-describe.each([
-  { name: 'ergenecore', make: () => createErgenecoreAdapter({ logger: silentLogger }) },
-  { name: 'hono', make: () => createHonoAdapter({ logger: silentLogger })[0] },
-])('sliding cookie on $name', ({ make }) => {
-  const bootUsers = () =>
-    createTestApp({
-      adapter: make(),
-      logger: silentLogger,
-      components: [AppAuth, Users],
-      imports: [AuthGuard, AuthGuardMiddleware, AuthProviderRegistry],
-    });
+describe.each(contextShapes)('sliding cookie on the %s context', (shape) => {
+  const bootUsers = () => bootFake({ shape, components: [AppAuth, Users], imports: guardImports });
 
   afterEach(() => {
     setSystemTime();
@@ -183,17 +180,17 @@ describe.each([
 
   test('a cookie session past half-life gets its cookie re-issued with a fresh Max-Age', async () => {
     await using app = await bootUsers();
-    const token = await tokenFor(app as any);
+    const token = await tokenFor(app);
     const viaCookie = { cookie: `asena_session=${token}` };
 
-    const early = await fetch(`${app.baseUrl}/users`, { headers: viaCookie });
+    const early = await app.fetch('/users', { headers: viaCookie });
 
     expect(early.status).toBe(200);
     expect(early.headers.get('set-cookie')).toBeNull();
 
     setSystemTime(new Date(Date.now() + 2_000_000));
 
-    const slid = await fetch(`${app.baseUrl}/users`, { headers: viaCookie });
+    const slid = await app.fetch('/users', { headers: viaCookie });
     const setCookie = slid.headers.get('set-cookie') ?? '';
 
     expect(slid.status).toBe(200);
@@ -203,11 +200,11 @@ describe.each([
 
   test('a Bearer session that slides gets no cookie', async () => {
     await using app = await bootUsers();
-    const token = await tokenFor(app as any);
+    const token = await tokenFor(app);
 
     setSystemTime(new Date(Date.now() + 2_000_000));
 
-    const res = await fetch(`${app.baseUrl}/users`, { headers: auth(token) });
+    const res = await app.fetch('/users', { headers: auth(token) });
 
     expect(res.status).toBe(200);
     expect(res.headers.get('set-cookie')).toBeNull();

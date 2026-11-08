@@ -17,6 +17,7 @@ import {
   BetterAuthService,
 } from '../index';
 import type { BetterAuthInstance } from '../index';
+import { bootFake, contextShapes } from './support/fakeAdapter';
 
 const expires = new Date(Math.floor(Date.now() / 1000) * 1000 + 86_400_000);
 
@@ -113,27 +114,11 @@ const ageSession = (userId: string) => {
   return row;
 };
 
-describe.each(adapters)('Better Auth cookies on $name', ({ name, make }) => {
+const imports = [AuthGuard, AuthGuardMiddleware, AuthProviderRegistry];
+
+describe.each(adapters)('Better Auth cookies on $name', ({ make }) => {
   const boot = () =>
-    createTestApp({
-      adapter: make(),
-      logger: silentLogger,
-      components: [AttrBA, AttrRoutes, RealBA, CachedBA, RealRoutes, CachedRoutes, RealAuthCtrl],
-      imports: [AuthGuard, AuthGuardMiddleware, AuthProviderRegistry],
-    });
-
-  type App = Awaited<ReturnType<typeof boot>>;
-
-  const signUp = async (app: App, email: string) => {
-    const res = await fetch(`${app.baseUrl}/api/auth/sign-up/email`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ email, password: 'correct-horse-battery', name: 'Ada' }),
-    });
-    const body = (await res.json()) as { user: { id: string } };
-
-    return { res, userId: body.user?.id, cookie: pair(byName(res).get(TOKEN_COOKIE) ?? '') };
-  };
+    createTestApp({ adapter: make(), logger: silentLogger, components: [AttrBA, AttrRoutes], imports });
 
   test('a forwarded Set-Cookie keeps Domain, Path, Expires, Secure, HttpOnly, SameSite and Partitioned', async () => {
     await using app = await boot();
@@ -153,6 +138,24 @@ describe.each(adapters)('Better Auth cookies on $name', ({ name, make }) => {
     expect(cookie.sameSite).toBe('none');
     expect(cookie.partitioned).toBe(true);
   });
+});
+
+describe.each(contextShapes)('Better Auth cookies on the %s context', (name) => {
+  const boot = () =>
+    bootFake({ shape: name, components: [RealBA, CachedBA, RealRoutes, CachedRoutes, RealAuthCtrl], imports });
+
+  type App = Awaited<ReturnType<typeof boot>>;
+
+  const signUp = async (app: App, email: string) => {
+    const res = await app.fetch('/api/auth/sign-up/email', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email, password: 'correct-horse-battery', name: 'Ada' }),
+    });
+    const body = (await res.json()) as { user: { id: string } };
+
+    return { res, userId: body.user?.id, cookie: pair(byName(res).get(TOKEN_COOKIE) ?? '') };
+  };
 
   test('real Better Auth: signing up through the mounted handler opens a guarded route by its cookie', async () => {
     await using app = await boot();
@@ -160,9 +163,9 @@ describe.each(adapters)('Better Auth cookies on $name', ({ name, make }) => {
 
     expect(res.status).toBe(200);
     expect(cookie.startsWith(`${TOKEN_COOKIE}=`)).toBe(true);
-    expect((await fetch(`${app.baseUrl}/real`)).status).toBe(401);
+    expect((await app.fetch('/real')).status).toBe(401);
 
-    const me = await fetch(`${app.baseUrl}/real`, { headers: { cookie } });
+    const me = await app.fetch('/real', { headers: { cookie } });
 
     expect(me.status).toBe(200);
     expect(await me.json()).toEqual({ user: userId });
@@ -175,7 +178,7 @@ describe.each(adapters)('Better Auth cookies on $name', ({ name, make }) => {
     const row = ageSession(userId);
     const aged = row.expiresAt.getTime();
 
-    const res = await fetch(`${app.baseUrl}/real`, { headers: { cookie } });
+    const res = await app.fetch('/real', { headers: { cookie } });
     const refreshed = byName(res).get(TOKEN_COOKIE);
 
     expect(res.status).toBe(200);
@@ -195,13 +198,13 @@ describe.each(adapters)('Better Auth cookies on $name', ({ name, make }) => {
     await using app = await boot();
     const { userId, cookie } = await signUp(app, `cached-${name}@example.com`);
 
-    const plain = await fetch(`${app.baseUrl}/cached`, { headers: { cookie } });
+    const plain = await app.fetch('/cached', { headers: { cookie } });
 
     expect(plain.status).toBe(200);
     expect(await plain.json()).toEqual({ user: userId });
     expect([...byName(plain).keys()]).toEqual([DATA_COOKIE]);
 
-    const cached = await fetch(`${app.baseUrl}/cached`, {
+    const cached = await app.fetch('/cached', {
       headers: { cookie: `${cookie}; ${pair(byName(plain).get(DATA_COOKIE)!)}` },
     });
 
@@ -210,7 +213,7 @@ describe.each(adapters)('Better Auth cookies on $name', ({ name, make }) => {
 
     ageSession(userId);
 
-    const refreshed = await fetch(`${app.baseUrl}/cached`, { headers: { cookie } });
+    const refreshed = await app.fetch('/cached', { headers: { cookie } });
     const cookies = byName(refreshed);
 
     expect(refreshed.status).toBe(200);
