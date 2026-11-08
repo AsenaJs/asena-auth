@@ -2,14 +2,13 @@ import { afterEach, describe, expect, mock, setSystemTime, spyOn, test } from 'b
 import { AUTH_PROVIDER_KEY, AUTH_SESSION_CONTEXT_KEY, getAuthSession } from '@asenajs/asena/auth';
 import type { AuthSession } from '@asenajs/asena/auth';
 import { ComponentConstants } from '@asenajs/asena/ioc/constants';
-import { createTestApp, silentLogger } from '@asenajs/asena/test';
 import { getOwnTypedMetadata, getTypedMetadata } from '@asenajs/asena/utils';
-import { createErgenecoreAdapter } from '@asenajs/ergenecore';
 import { AsenaAuthService } from '../lib/AsenaAuthService';
 import { Auth } from '../lib/decorators';
 import { hashToken } from '../lib/crypto';
 import { withSubprotocolToken } from '../lib/helpers';
 import { MemoryAuthStore } from '../lib/store';
+import { bootFake } from './support/fakeAdapter';
 
 const URL_ = 'http://localhost/me';
 
@@ -425,11 +424,7 @@ describe('sessions', () => {
     @Auth({ sessionTtl: 3600, absoluteTtl: 60 })
     class Inverted extends AsenaAuthService {}
 
-    const error = await createTestApp({
-      adapter: createErgenecoreAdapter({ logger: silentLogger }),
-      logger: silentLogger,
-      components: [Inverted],
-    }).catch((e: unknown) => e as Error);
+    const error = await bootFake({ components: [Inverted] }).catch((e: unknown) => e as Error);
 
     expect(error).toBeInstanceOf(Error);
     expect(String((error as Error).cause)).toContain('absoluteTtl (60) is smaller than sessionTtl (3600)');
@@ -923,11 +918,7 @@ describe('sessions', () => {
     @Auth({ store })
     class Counted extends AsenaAuthService {}
 
-    const app = await createTestApp({
-      adapter: createErgenecoreAdapter({ logger: silentLogger }),
-      logger: silentLogger,
-      components: [Counted],
-    });
+    const app = await bootFake({ components: [Counted] });
 
     try {
       expect(start).toHaveBeenCalledTimes(1);
