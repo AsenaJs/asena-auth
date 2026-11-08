@@ -7,7 +7,7 @@ file maps every test case of the files that imported an adapter at `0118ae1` to 
 |---|---|
 | `auth/unit` | Stays in this repo and needs no pipeline: plain objects, stubs or a bare service instance. |
 | `auth/fake` | Stays in this repo and runs on the in-process fake adapter in `test/support/fakeAdapter.ts`, built from `@asenajs/asena/adapter` only. |
-| `suite/P2.auth.NNN` | Moves to `asena-test-suite` (Part 2 ecosystem module `auth`) and runs there on both real adapters, because what it asserts is the adapter's own behaviour. The id is provisional until the suite module exists. |
+| `suite/P2.auth.NNN` | Runs in `asena-test-suite` as scenario `P2.auth.NNN` of the Part 2 ecosystem module `auth` (`ecosystem/modules/auth/auth.test.ts`), on both real adapters, because what it asserts is the adapter's own behaviour. It is no longer in this repo. |
 
 A case goes to the suite only when its assertion is about the adapter: cookie attributes as written on the wire,
 `Set-Cookie` on an error response, the middleware → validator / context-contract order, the WebSocket upgrade and
@@ -30,9 +30,11 @@ adapter runs on the `plain` shape.
 | - `auth/fake` | 111 |
 | - `suite/...` | 80 (43 scenarios) |
 | Files that never imported an adapter | 103 |
+| `bun test` now (`auth/unit` + `auth/fake` + the 103) | 287 |
 
-Until the suite cases are deleted (stage 3) they stay in place, still on the real adapters, so `bun test` keeps
-running all 367.
+`CsrfProxy`, `RoutePatternProbe`, `OnStartOrderProbe`, `WebSocketValueProbe` and `WebSocketUnauthorized` held only
+`suite/...` cases and are gone, with `test/wsClient.ts`, the real-socket client only they and the other suite cases
+used.
 
 ## Where the cases run
 
@@ -42,8 +44,8 @@ running all 367.
   (`guard`, `session and WebSocket middlewares`, `boot errors`). They boot with `bootFake(...)` and call `app.fetch(path)`
   and `app.connect(path)` instead of `fetch(app.baseUrl + path)` and a real socket; a rejected upgrade is
   `{ opened: false, status }`, so those cases now also assert the 401.
-- `suite/...` cases are in their original describe on the real adapters, alone or next to fixtures only they use
-  (`GuardIntegration` `ItemCreation`, the `adapterRoutes` builder in `Integration`).
+- `suite/...` cases run in `asena-test-suite` under `ASENA_ADAPTER=ergenecore` and `ASENA_ADAPTER=hono`, one scenario
+  per row below; the fixtures only they used left with them.
 
 ## AsenaAuthService.test.ts (69 runs)
 
@@ -222,7 +224,7 @@ adapter's report; `requestKeys` / `routeKey` themselves are `auth/unit` in AuthG
 | routePattern > @All route, GET | 2 | suite/P2.auth.031 |
 | routePattern > @All route, DELETE | 2 | suite/P2.auth.032 |
 | routePattern > Context.define route: a contract context still carries routePattern and the raw request | 2 | suite/P2.auth.033 |
-| routePattern on hono > a prefix without a leading slash: hono adds one, the key normalizes the same way | 1 | suite/P2.auth.034 (hono only today) |
+| routePattern on hono > a prefix without a leading slash: hono adds one, the key normalizes the same way | 1 | suite/P2.auth.034 (both adapters; ergenecore refuses the unslashed path and runs it under the divergence flag `routing.unslashedPathIsServed`) |
 
 ## OnStartOrderProbe.test.ts (1 run)
 

@@ -1,12 +1,9 @@
 import { afterEach, describe, expect, setSystemTime, test } from 'bun:test';
-import { Protected, Roles, getAuthSession } from '@asenajs/asena/auth';
+import { Protected, getAuthSession } from '@asenajs/asena/auth';
 import { Config, Controller, WebSocket as WebSocketNamespace } from '@asenajs/asena/decorators';
 import { Post } from '@asenajs/asena/decorators/http';
 import { Inject } from '@asenajs/asena/decorators/ioc';
-import { createTestApp, silentLogger } from '@asenajs/asena/test';
 import { AsenaWebSocketService } from '@asenajs/asena/web-socket';
-import { createErgenecoreAdapter } from '@asenajs/ergenecore';
-import { createHonoAdapter } from '@asenajs/hono-adapter';
 import {
   AsenaAuthService,
   Auth,
@@ -64,12 +61,6 @@ class Slid {
 
     return ctx.send({ ok: true });
   }
-
-  @Roles('admin')
-  @Post('/admin')
-  admin(ctx: any) {
-    return ctx.send({ ok: true });
-  }
 }
 
 @WebSocketNamespace({ path: '/slid-chat', name: 'SlidChat', middlewares: [AuthWebSocketMiddleware] })
@@ -85,11 +76,6 @@ class GlobalSession {
     return [AuthSessionMiddleware];
   }
 }
-
-const adapters = [
-  { name: 'ergenecore', make: () => createErgenecoreAdapter({ logger: silentLogger }) },
-  { name: 'hono', make: () => createHonoAdapter({ logger: silentLogger })[0] },
-];
 
 const setups: [string, any[]][] = [
   ['guard only', []],
@@ -121,32 +107,6 @@ const slidRequest = async (
 
 afterEach(() => {
   setSystemTime();
-});
-
-describe.each(adapters)('slid session cookie on $name', ({ name, make }) => {
-  describe.each(setups)('%s', (_case, extra) => {
-    const boot = () =>
-      createTestApp({ adapter: make() as any, logger: silentLogger, components: [SlideAuth, Slid, ...extra], imports });
-
-    test('a slid request the guard answers 403 still carries the re-issued cookie', async () => {
-      await using app = await boot();
-      const send: Send = (path, init) => fetch(`${app.baseUrl}${path}`, init);
-      const { res, token, setCookies } = await slidRequest(app, send, { path: 'admin', elapsed: 60 });
-
-      expect(res.status).toBe(403);
-
-      // hono-adapter 5.0.2 builds its error response without the cookies the request had set.
-      if (name === 'hono') {
-        expect(setCookies).toEqual([]);
-
-        return;
-      }
-
-      expect(setCookies).toHaveLength(1);
-      expect(setCookies[0]?.value).toBe(token);
-      expect(setCookies[0]?.maxAge).toBe(60);
-    });
-  });
 });
 
 describe.each(contextShapes)('slid session cookie on the %s context', (shape) => {

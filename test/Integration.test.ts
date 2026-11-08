@@ -12,17 +12,8 @@ import type { AsenaAuthProvider, AuthSession } from '@asenajs/asena/auth';
 import { Config, Controller, Middleware, Service, WebSocket as WebSocketNamespace } from '@asenajs/asena/decorators';
 import { Get, Post } from '@asenajs/asena/decorators/http';
 import { Implements, Inject } from '@asenajs/asena/decorators/ioc';
-import { AsenaMiddlewareService } from '@asenajs/asena/middleware';
-import { createTestApp, silentLogger } from '@asenajs/asena/test';
 import { defineTypedMetadata } from '@asenajs/asena/utils';
 import { AsenaWebSocketService } from '@asenajs/asena/web-socket';
-import {
-  Context as ErgeneContext,
-  ValidationService as ErgeneValidation,
-  createErgenecoreAdapter,
-} from '@asenajs/ergenecore';
-import { Context as HonoContext, ValidationService as HonoValidation, createHonoAdapter } from '@asenajs/hono-adapter';
-import { z } from 'zod';
 import {
   AsenaAuthService,
   Auth,
@@ -40,7 +31,6 @@ import {
 import type { BetterAuthInstance } from '../index';
 import { FAKE_ORIGIN, bootFake, contextShapes } from './support/fakeAdapter';
 import { stringFields } from './support/schema';
-import { connect } from './wsClient';
 
 const calls: string[] = [];
 
@@ -217,58 +207,6 @@ class SessionConfig {
 
 const sharedComponents = [AppAuth, AppBA, Keycloak, Login, Me, BaRoutes, KcRoutes, Users, OpenUsers, AuthCtrl, Chat];
 
-const adapterRoutes = (Validation: typeof ErgeneValidation | typeof HonoValidation, Ctx: any) => {
-  @Middleware({ validator: true })
-  class ItemValidator extends (Validation as typeof ErgeneValidation) {
-    json() {
-      return z.object({ name: z.string() }).superRefine(() => {
-        calls.push('validator');
-      });
-    }
-  }
-
-  @Middleware()
-  class Recorder extends AsenaMiddlewareService {
-    async handle(_ctx: any, next: () => Promise<void>) {
-      calls.push('recorder');
-      await next();
-    }
-  }
-
-  class ItemBody extends Ctx.define({ body: z.object({ name: z.string() }) }) {}
-
-  @Protected()
-  @Controller('/items')
-  class Items {
-    @Post({ path: '/', validator: ItemValidator, middlewares: [Recorder] })
-    create(ctx: any) {
-      calls.push('handler');
-
-      return ctx.send({ ok: true });
-    }
-
-    @Post('/contract/:id')
-    contract(ctx: ItemBody) {
-      return (ctx as any).send({ name: (ctx as any).input.body.name, user: getAuthSession(ctx as any)?.user.id });
-    }
-  }
-
-  return [ItemValidator, Recorder, Items];
-};
-
-const adapters = [
-  {
-    name: 'ergenecore',
-    make: () => createErgenecoreAdapter({ logger: silentLogger }),
-    routes: adapterRoutes(ErgeneValidation, ErgeneContext),
-  },
-  {
-    name: 'hono',
-    make: () => createHonoAdapter({ logger: silentLogger })[0],
-    routes: adapterRoutes(HonoValidation, HonoContext),
-  },
-];
-
 @Middleware({ validator: true })
 class ItemValidator {
   json() {
@@ -291,118 +229,6 @@ const json = (body: unknown, headers: Record<string, string> = {}) => ({
   method: 'POST',
   headers: { 'content-type': 'application/json', ...headers },
   body: JSON.stringify(body),
-});
-
-describe.each(adapters)('asena-auth end to end on $name', ({ name, make, routes }) => {
-  const boot = (extra: any[] = []) =>
-    createTestApp({
-      adapter: make(),
-      logger: silentLogger,
-      components: [...sharedComponents, ...routes, ...extra],
-      imports: [...authComponents],
-    });
-
-  type App = Awaited<ReturnType<typeof boot>>;
-
-  const login = async (app: App, roles: string[] = []) => {
-    const res = await fetch(`${app.baseUrl}/auth/login`, json({ id: 'u1', roles }));
-
-    return { res, token: ((await res.json()) as { token: string }).token };
-  };
-
-  test('login returns a token and sets an HttpOnly, SameSite=Lax session cookie on /', async () => {
-    await using app = await boot();
-    const { res, token } = await login(app);
-    const cookie = res.headers.get('set-cookie') ?? '';
-
-    expect(res.status).toBe(200);
-    expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect(cookie).toContain(`asena_session=${token}`);
-    expect(cookie).toContain('HttpOnly');
-    expect(cookie).toMatch(/SameSite=Lax/i);
-    expect(cookie).toContain('Path=/');
-  });
-
-  test('logout ends the current session at once and clears the cookie with its attributes', async () => {
-    await using app = await boot();
-    const { token } = await login(app);
-    const other = (await login(app)).token;
-
-    const res = await fetch(`${app.baseUrl}/auth/logout`, { method: 'POST', headers: bearer(token) });
-    const cleared = Bun.Cookie.parse(res.headers.getSetCookie()[0] ?? '');
-
-    expect(res.status).toBe(200);
-    expect(cleared.name).toBe('asena_session');
-    expect(cleared.value).toBe('');
-    expect(cleared.maxAge === 0 || (cleared.expires?.getTime() ?? Infinity) <= Date.now()).toBe(true);
-    expect(cleared.path).toBe('/');
-    expect(cleared.sameSite).toBe('lax');
-
-    // ergenecore 5.0.1's deleteCookie forwards only path and domain to Bun's cookie map.
-    if (name === 'hono') {
-      expect(cleared.secure).toBe(true);
-    }
-
-    expect((await fetch(`${app.baseUrl}/me`, { headers: bearer(token) })).status).toBe(401);
-    expect((await fetch(`${app.baseUrl}/me`, { headers: bearer(other) })).status).toBe(200);
-  });
-
-  test('order: the guard rejects before the route middleware and the validator ever run', async () => {
-    await using app = await boot();
-    const { token } = await login(app);
-
-    calls.length = 0;
-
-    expect((await fetch(`${app.baseUrl}/items`, json({ name: 'x' }))).status).toBe(401);
-    expect(calls).toEqual(['provider']);
-
-    calls.length = 0;
-
-    expect((await fetch(`${app.baseUrl}/items`, json({ name: 1 }, bearer(token)))).status).toBe(400);
-    expect(calls).toEqual(['provider', 'recorder']);
-
-    calls.length = 0;
-
-    expect((await fetch(`${app.baseUrl}/items`, json({ name: 'x' }, bearer(token)))).status).toBe(200);
-    expect(calls).toEqual(['provider', 'recorder', 'validator', 'handler']);
-  });
-
-  test('a @Protected Context.define route rejects before its contract validates the body', async () => {
-    await using app = await boot();
-    const { token } = await login(app);
-
-    expect((await fetch(`${app.baseUrl}/items/contract/1`, json({ name: 1 }))).status).toBe(401);
-    expect((await fetch(`${app.baseUrl}/items/contract/1`, json({ name: 1 }, bearer(token)))).status).toBe(400);
-
-    const ok = await fetch(`${app.baseUrl}/items/contract/1`, json({ name: 'x' }, bearer(token)));
-
-    expect(ok.status).toBe(200);
-    expect(await ok.json()).toEqual({ name: 'x', user: 'u1' });
-  });
-
-  test('WebSocket: subprotocol token opens and echoes `bearer`; Authorization header opens; no token never opens', async () => {
-    await using app = await boot();
-    const { token } = await login(app);
-
-    const viaProtocol = await connect(app.wsUrl('/chat'), ['bearer', token]);
-
-    expect(viaProtocol.opened).toBe(true);
-
-    if (viaProtocol.opened) {
-      expect(viaProtocol.protocol).toBe('bearer');
-      expect(viaProtocol.message.authSession.user.id).toBe('u1');
-    }
-
-    const viaHeader = await connect(app.wsUrl('/chat'), { headers: bearer(token) });
-
-    expect(viaHeader.opened).toBe(true);
-
-    if (viaHeader.opened) {
-      expect(viaHeader.message.authSession.user.id).toBe('u1');
-    }
-
-    expect(await connect(app.wsUrl('/chat'))).toEqual({ opened: false });
-  });
 });
 
 describe.each(contextShapes)('asena-auth end to end on the %s context', (shape) => {

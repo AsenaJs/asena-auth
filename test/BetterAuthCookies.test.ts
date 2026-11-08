@@ -3,9 +3,6 @@ import { Protected, getAuthSession } from '@asenajs/asena/auth';
 import { Controller } from '@asenajs/asena/decorators';
 import { Get } from '@asenajs/asena/decorators/http';
 import { Inject } from '@asenajs/asena/decorators/ioc';
-import { createTestApp, silentLogger } from '@asenajs/asena/test';
-import { createErgenecoreAdapter } from '@asenajs/ergenecore';
-import { createHonoAdapter } from '@asenajs/hono-adapter';
 import { betterAuth } from 'better-auth';
 import { memoryAdapter } from 'better-auth/adapters/memory';
 import {
@@ -16,39 +13,7 @@ import {
   BetterAuthController,
   BetterAuthService,
 } from '../index';
-import type { BetterAuthInstance } from '../index';
 import { bootFake, contextShapes } from './support/fakeAdapter';
-
-const expires = new Date(Math.floor(Date.now() / 1000) * 1000 + 86_400_000);
-
-const attributeCookie =
-  `ba.attrs=v%2Bx%3D; Domain=example.com; Path=/app; Expires=${expires.toUTCString()}; ` +
-  'Secure; HttpOnly; SameSite=None; Partitioned';
-
-const attributeAuth: BetterAuthInstance = {
-  handler: async () => new Response(null, { status: 404 }),
-  api: {
-    getSession: async () => ({
-      headers: new Headers([['set-cookie', attributeCookie]]),
-      response: {
-        session: { id: 's1', userId: 'a1', createdAt: new Date(), expiresAt: new Date(Date.now() + 3_600_000) },
-        user: { id: 'a1' },
-      },
-    }),
-  },
-};
-
-@BetterAuth({ auth: attributeAuth })
-class AttrBA extends BetterAuthService {}
-
-@Protected({ provider: 'AttrBA' })
-@Controller('/attrs')
-class AttrRoutes {
-  @Get('/')
-  me(ctx: any) {
-    return ctx.send({ user: getAuthSession(ctx)?.user.id });
-  }
-}
 
 const db: Record<string, any[]> = { user: [], session: [], account: [], verification: [] };
 
@@ -92,11 +57,6 @@ class RealAuthCtrl extends BetterAuthController {
   protected readonly authService!: RealBA;
 }
 
-const adapters = [
-  { name: 'ergenecore', make: () => createErgenecoreAdapter({ logger: silentLogger }) },
-  { name: 'hono', make: () => createHonoAdapter({ logger: silentLogger })[0] },
-];
-
 const TOKEN_COOKIE = 'better-auth.session_token';
 const DATA_COOKIE = 'better-auth.session_data';
 
@@ -115,30 +75,6 @@ const ageSession = (userId: string) => {
 };
 
 const imports = [AuthGuard, AuthGuardMiddleware, AuthProviderRegistry];
-
-describe.each(adapters)('Better Auth cookies on $name', ({ make }) => {
-  const boot = () =>
-    createTestApp({ adapter: make(), logger: silentLogger, components: [AttrBA, AttrRoutes], imports });
-
-  test('a forwarded Set-Cookie keeps Domain, Path, Expires, Secure, HttpOnly, SameSite and Partitioned', async () => {
-    await using app = await boot();
-
-    const res = await fetch(`${app.baseUrl}/attrs`);
-    const [raw] = res.headers.getSetCookie();
-    const cookie = Bun.Cookie.parse(raw ?? '');
-
-    expect(res.status).toBe(200);
-    expect(cookie.name).toBe('ba.attrs');
-    expect(cookie.value).toBe('v%2Bx%3D');
-    expect(cookie.domain).toBe('example.com');
-    expect(cookie.path).toBe('/app');
-    expect(cookie.expires?.getTime()).toBe(expires.getTime());
-    expect(cookie.secure).toBe(true);
-    expect(cookie.httpOnly).toBe(true);
-    expect(cookie.sameSite).toBe('none');
-    expect(cookie.partitioned).toBe(true);
-  });
-});
 
 describe.each(contextShapes)('Better Auth cookies on the %s context', (name) => {
   const boot = () =>
