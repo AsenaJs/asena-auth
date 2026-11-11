@@ -1,5 +1,11 @@
 # @asenajs/asena-auth
 
+## 1.0.1
+
+### Patch Changes
+
+- 0118ae1: Accept @asenajs/asena 0.13 as a peer.
+
 ## 1.0.0
 
 ### Major Changes
