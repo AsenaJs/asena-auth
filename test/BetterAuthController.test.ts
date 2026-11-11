@@ -1,10 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { Controller } from '@asenajs/asena/decorators';
 import { Inject } from '@asenajs/asena/decorators/ioc';
-import { createTestApp, silentLogger } from '@asenajs/asena/test';
-import { createErgenecoreAdapter } from '@asenajs/ergenecore';
-import { createHonoAdapter } from '@asenajs/hono-adapter';
 import { BetterAuth, BetterAuthController, BetterAuthService } from '../lib/better-auth';
+import { bootFake, contextShapes } from './support/fakeAdapter';
 
 const seen: unknown[] = [];
 
@@ -26,11 +24,8 @@ class AuthCtrl extends BetterAuthController {
   protected readonly authService!: AppBA;
 }
 
-describe.each([
-  ['ergenecore', () => createErgenecoreAdapter({ logger: silentLogger })],
-  ['hono', () => createHonoAdapter({ logger: silentLogger })[0]],
-] as const)('BetterAuthController on %s', (_name, adapter) => {
-  const boot = () => createTestApp({ adapter: adapter(), logger: silentLogger, components: [AppBA, AuthCtrl] });
+describe.each(contextShapes)('BetterAuthController on the %s context', (shape) => {
+  const boot = () => bootFake({ shape, components: [AppBA, AuthCtrl] });
 
   test.each([
     ['POST', '/api/auth/sign-in/email'],
@@ -41,7 +36,7 @@ describe.each([
       await using app = await boot();
       seen.length = 0;
 
-      const res = await fetch(`${app.baseUrl}${path}`, { method });
+      const res = await app.fetch(path, { method });
 
       expect(res.status).toBe(201);
       expect(await res.json()).toEqual({ path, method });

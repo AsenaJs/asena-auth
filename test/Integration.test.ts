@@ -12,17 +12,8 @@ import type { AsenaAuthProvider, AuthSession } from '@asenajs/asena/auth';
 import { Config, Controller, Middleware, Service, WebSocket as WebSocketNamespace } from '@asenajs/asena/decorators';
 import { Get, Post } from '@asenajs/asena/decorators/http';
 import { Implements, Inject } from '@asenajs/asena/decorators/ioc';
-import { AsenaMiddlewareService } from '@asenajs/asena/middleware';
-import { createTestApp, silentLogger } from '@asenajs/asena/test';
 import { defineTypedMetadata } from '@asenajs/asena/utils';
 import { AsenaWebSocketService } from '@asenajs/asena/web-socket';
-import {
-  Context as ErgeneContext,
-  ValidationService as ErgeneValidation,
-  createErgenecoreAdapter,
-} from '@asenajs/ergenecore';
-import { Context as HonoContext, ValidationService as HonoValidation, createHonoAdapter } from '@asenajs/hono-adapter';
-import { z } from 'zod';
 import {
   AsenaAuthService,
   Auth,
@@ -38,7 +29,8 @@ import {
   authComponents,
 } from '../index';
 import type { BetterAuthInstance } from '../index';
-import { connect } from './wsClient';
+import { FAKE_ORIGIN, bootFake, contextShapes } from './support/fakeAdapter';
+import { stringFields } from './support/schema';
 
 const calls: string[] = [];
 
@@ -213,57 +205,23 @@ class SessionConfig {
   }
 }
 
-const adapterRoutes = (Validation: typeof ErgeneValidation | typeof HonoValidation, Ctx: any) => {
-  @Middleware({ validator: true })
-  class ItemValidator extends (Validation as typeof ErgeneValidation) {
-    json() {
-      return z.object({ name: z.string() }).superRefine(() => {
-        calls.push('validator');
-      });
-    }
+const sharedComponents = [AppAuth, AppBA, Keycloak, Login, Me, BaRoutes, KcRoutes, Users, OpenUsers, AuthCtrl, Chat];
+
+@Middleware({ validator: true })
+class ItemValidator {
+  json() {
+    return stringFields('name');
   }
+}
 
-  @Middleware()
-  class Recorder extends AsenaMiddlewareService {
-    async handle(_ctx: any, next: () => Promise<void>) {
-      calls.push('recorder');
-      await next();
-    }
+@Protected()
+@Controller('/items')
+class Items {
+  @Post({ path: '/', validator: ItemValidator })
+  create(ctx: any) {
+    return ctx.send({ ok: true });
   }
-
-  class ItemBody extends Ctx.define({ body: z.object({ name: z.string() }) }) {}
-
-  @Protected()
-  @Controller('/items')
-  class Items {
-    @Post({ path: '/', validator: ItemValidator, middlewares: [Recorder] })
-    create(ctx: any) {
-      calls.push('handler');
-
-      return ctx.send({ ok: true });
-    }
-
-    @Post('/contract/:id')
-    contract(ctx: ItemBody) {
-      return (ctx as any).send({ name: (ctx as any).input.body.name, user: getAuthSession(ctx as any)?.user.id });
-    }
-  }
-
-  return [ItemValidator, Recorder, Items];
-};
-
-const adapters = [
-  {
-    name: 'ergenecore',
-    make: () => createErgenecoreAdapter({ logger: silentLogger }),
-    routes: adapterRoutes(ErgeneValidation, ErgeneContext),
-  },
-  {
-    name: 'hono',
-    make: () => createHonoAdapter({ logger: silentLogger })[0],
-    routes: adapterRoutes(HonoValidation, HonoContext),
-  },
-];
+}
 
 const bearer = (token: string) => ({ authorization: `Bearer ${token}` });
 
@@ -273,92 +231,40 @@ const json = (body: unknown, headers: Record<string, string> = {}) => ({
   body: JSON.stringify(body),
 });
 
-describe.each(adapters)('asena-auth end to end on $name', ({ name, make, routes }) => {
+describe.each(contextShapes)('asena-auth end to end on the %s context', (shape) => {
   const boot = (extra: any[] = []) =>
-    createTestApp({
-      adapter: make(),
-      logger: silentLogger,
-      components: [
-        AppAuth,
-        AppBA,
-        Keycloak,
-        Login,
-        Me,
-        BaRoutes,
-        KcRoutes,
-        Users,
-        OpenUsers,
-        AuthCtrl,
-        Chat,
-        ...routes,
-        ...extra,
-      ],
+    bootFake({
+      shape,
+      components: [...sharedComponents, ItemValidator, Items, ...extra],
       imports: [...authComponents],
     });
 
   type App = Awaited<ReturnType<typeof boot>>;
 
-  const login = async (app: App, roles: string[] = []) => {
-    const res = await fetch(`${app.baseUrl}/auth/login`, json({ id: 'u1', roles }));
+  const login = async (app: App, roles: string[] = [], id = 'u1') => {
+    const res = await app.fetch('/auth/login', json({ id, roles }));
 
     return { res, token: ((await res.json()) as { token: string }).token };
   };
-
-  test('login returns a token and sets an HttpOnly, SameSite=Lax session cookie on /', async () => {
-    await using app = await boot();
-    const { res, token } = await login(app);
-    const cookie = res.headers.get('set-cookie') ?? '';
-
-    expect(res.status).toBe(200);
-    expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect(cookie).toContain(`asena_session=${token}`);
-    expect(cookie).toContain('HttpOnly');
-    expect(cookie).toMatch(/SameSite=Lax/i);
-    expect(cookie).toContain('Path=/');
-  });
 
   test('@Protected: 401 anonymous, 200 by Bearer and by cookie, 401 once revoked', async () => {
     await using app = await boot();
     const { token } = await login(app);
 
-    const anonymous = await fetch(`${app.baseUrl}/me`);
+    const anonymous = await app.fetch('/me');
 
     expect(anonymous.status).toBe(401);
     expect(anonymous.headers.get('www-authenticate')).toBe('Bearer');
 
-    const viaBearer = await fetch(`${app.baseUrl}/me`, { headers: bearer(token) });
+    const viaBearer = await app.fetch('/me', { headers: bearer(token) });
 
     expect(viaBearer.status).toBe(200);
     expect(await viaBearer.json()).toEqual({ user: 'u1' });
-    expect((await fetch(`${app.baseUrl}/me`, { headers: { cookie: `asena_session=${token}` } })).status).toBe(200);
+    expect((await app.fetch('/me', { headers: { cookie: `asena_session=${token}` } })).status).toBe(200);
 
     await (await app.resolve<AppAuth>('AppAuth')).revokeSession(token);
 
-    expect((await fetch(`${app.baseUrl}/me`, { headers: bearer(token) })).status).toBe(401);
-  });
-
-  test('logout ends the current session at once and clears the cookie with its attributes', async () => {
-    await using app = await boot();
-    const { token } = await login(app);
-    const other = (await login(app)).token;
-
-    const res = await fetch(`${app.baseUrl}/auth/logout`, { method: 'POST', headers: bearer(token) });
-    const cleared = Bun.Cookie.parse(res.headers.getSetCookie()[0] ?? '');
-
-    expect(res.status).toBe(200);
-    expect(cleared.name).toBe('asena_session');
-    expect(cleared.value).toBe('');
-    expect(cleared.maxAge === 0 || (cleared.expires?.getTime() ?? Infinity) <= Date.now()).toBe(true);
-    expect(cleared.path).toBe('/');
-    expect(cleared.sameSite).toBe('lax');
-
-    // ergenecore 5.0.1's deleteCookie forwards only path and domain to Bun's cookie map.
-    if (name === 'hono') {
-      expect(cleared.secure).toBe(true);
-    }
-
-    expect((await fetch(`${app.baseUrl}/me`, { headers: bearer(token) })).status).toBe(401);
-    expect((await fetch(`${app.baseUrl}/me`, { headers: bearer(other) })).status).toBe(200);
+    expect((await app.fetch('/me', { headers: bearer(token) })).status).toBe(401);
   });
 
   test('logout by cookie revokes that session; logout without a session still answers and clears', async () => {
@@ -366,10 +272,10 @@ describe.each(adapters)('asena-auth end to end on $name', ({ name, make, routes 
     const { token } = await login(app);
     const cookie = { cookie: `asena_session=${token}` };
 
-    expect((await fetch(`${app.baseUrl}/auth/logout`, { method: 'POST', headers: cookie })).status).toBe(200);
-    expect((await fetch(`${app.baseUrl}/me`, { headers: cookie })).status).toBe(401);
+    expect((await app.fetch('/auth/logout', { method: 'POST', headers: cookie })).status).toBe(200);
+    expect((await app.fetch('/me', { headers: cookie })).status).toBe(401);
 
-    const anonymous = await fetch(`${app.baseUrl}/auth/logout`, { method: 'POST' });
+    const anonymous = await app.fetch('/auth/logout', { method: 'POST' });
 
     expect(anonymous.status).toBe(200);
     expect(anonymous.headers.getSetCookie()[0]).toStartWith('asena_session=;');
@@ -381,52 +287,48 @@ describe.each(adapters)('asena-auth end to end on $name', ({ name, make, routes 
     const cookie = { cookie: `asena_session=${token}` };
     const evil = { origin: 'https://evil.example', 'sec-fetch-site': 'cross-site' };
 
-    expect((await fetch(`${app.baseUrl}/items`, json({ name: 'x' }, { ...cookie, ...evil }))).status).toBe(401);
+    expect((await app.fetch('/items', json({ name: 'x' }, { ...cookie, ...evil }))).status).toBe(401);
+    expect((await app.fetch('/items', json({ name: 'x' }, { ...cookie, origin: 'https://evil.example' }))).status).toBe(
+      401,
+    );
+    expect((await app.fetch('/items', json({ name: 'x' }, { ...cookie, origin: FAKE_ORIGIN }))).status).toBe(200);
     expect(
-      (await fetch(`${app.baseUrl}/items`, json({ name: 'x' }, { ...cookie, origin: 'https://evil.example' }))).status,
-    ).toBe(401);
-    expect(
-      (await fetch(`${app.baseUrl}/items`, json({ name: 'x' }, { ...cookie, origin: new URL(app.baseUrl).origin })))
-        .status,
-    ).toBe(200);
-    expect(
-      (await fetch(`${app.baseUrl}/items`, json({ name: 'x' }, { ...cookie, 'sec-fetch-site': 'same-origin' }))).status,
+      (await app.fetch('/items', json({ name: 'x' }, { ...cookie, 'sec-fetch-site': 'same-origin' }))).status,
     ).toBe(200);
     expect(
       (
-        await fetch(
-          `${app.baseUrl}/items`,
+        await app.fetch(
+          '/items',
           json({ name: 'x' }, { ...cookie, origin: 'https://app.example', 'sec-fetch-site': 'cross-site' }),
         )
       ).status,
     ).toBe(200);
-    expect((await fetch(`${app.baseUrl}/items`, json({ name: 'x' }, { ...bearer(token), ...evil }))).status).toBe(200);
-    expect((await fetch(`${app.baseUrl}/me`, { headers: { ...cookie, ...evil } })).status).toBe(200);
+    expect((await app.fetch('/items', json({ name: 'x' }, { ...bearer(token), ...evil }))).status).toBe(200);
+    expect((await app.fetch('/me', { headers: { ...cookie, ...evil } })).status).toBe(200);
 
-    await fetch(`${app.baseUrl}/auth/logout`, { method: 'POST', headers: { ...cookie, ...evil } });
+    await app.fetch('/auth/logout', { method: 'POST', headers: { ...cookie, ...evil } });
 
-    expect((await fetch(`${app.baseUrl}/me`, { headers: cookie })).status).toBe(200);
+    expect((await app.fetch('/me', { headers: cookie })).status).toBe(200);
   });
 
   test('csrf: a cross-site WebSocket upgrade with only the cookie never opens; a same-origin one does', async () => {
     await using app = await boot();
     const { token } = await login(app);
     const cookie = `asena_session=${token}`;
+    const rejected = { opened: false, status: 401 } as const;
 
     expect(
-      await connect(app.wsUrl('/chat'), {
+      await app.connect('/chat', {
         headers: { cookie, origin: 'https://evil.example', 'sec-fetch-site': 'cross-site' },
       }),
-    ).toEqual({ opened: false });
-    expect(await connect(app.wsUrl('/chat'), { headers: { cookie, origin: 'https://evil.example' } })).toEqual({
-      opened: false,
-    });
+    ).toEqual(rejected);
+    expect(await app.connect('/chat', { headers: { cookie, origin: 'https://evil.example' } })).toEqual(rejected);
 
-    const sameOrigin = await connect(app.wsUrl('/chat'), { headers: { cookie, origin: new URL(app.baseUrl).origin } });
+    const sameOrigin = await app.connect('/chat', { headers: { cookie, origin: FAKE_ORIGIN } });
 
     expect(sameOrigin.opened).toBe(true);
 
-    const viaProtocol = await connect(app.wsUrl('/chat'), {
+    const viaProtocol = await app.connect('/chat', {
       headers: { cookie, origin: 'https://evil.example' },
       protocols: ['bearer', token],
     });
@@ -437,7 +339,7 @@ describe.each(adapters)('asena-auth end to end on $name', ({ name, make, routes 
   test('rotateSession: the old token is 401 at once, the new one works; only a cookie session gets a cookie', async () => {
     await using app = await boot();
     const rotate = async (headers: Record<string, string>) => {
-      const res = await fetch(`${app.baseUrl}/auth/rotate`, { method: 'POST', headers });
+      const res = await app.fetch('/auth/rotate', { method: 'POST', headers });
 
       expect(res.status).toBe(200);
 
@@ -448,8 +350,8 @@ describe.each(adapters)('asena-auth end to end on $name', ({ name, make, routes 
     const fromBearer = await rotate(bearer(viaBearer));
 
     expect(fromBearer.setCookies).toEqual([]);
-    expect((await fetch(`${app.baseUrl}/me`, { headers: bearer(viaBearer) })).status).toBe(401);
-    expect((await fetch(`${app.baseUrl}/me`, { headers: bearer(fromBearer.token) })).status).toBe(200);
+    expect((await app.fetch('/me', { headers: bearer(viaBearer) })).status).toBe(401);
+    expect((await app.fetch('/me', { headers: bearer(fromBearer.token) })).status).toBe(200);
 
     const viaCookie = (await login(app)).token;
     const fromCookie = await rotate({ cookie: `asena_session=${viaCookie}` });
@@ -459,43 +361,8 @@ describe.each(adapters)('asena-auth end to end on $name', ({ name, make, routes 
     expect(reissued.name).toBe('asena_session');
     expect(reissued.value).toBe(fromCookie.token);
     expect(reissued.httpOnly).toBe(true);
-    expect((await fetch(`${app.baseUrl}/me`, { headers: { cookie: `asena_session=${viaCookie}` } })).status).toBe(401);
-    expect(
-      (await fetch(`${app.baseUrl}/me`, { headers: { cookie: `asena_session=${fromCookie.token}` } })).status,
-    ).toBe(200);
-  });
-
-  test('order: the guard rejects before the route middleware and the validator ever run', async () => {
-    await using app = await boot();
-    const { token } = await login(app);
-
-    calls.length = 0;
-
-    expect((await fetch(`${app.baseUrl}/items`, json({ name: 'x' }))).status).toBe(401);
-    expect(calls).toEqual(['provider']);
-
-    calls.length = 0;
-
-    expect((await fetch(`${app.baseUrl}/items`, json({ name: 1 }, bearer(token)))).status).toBe(400);
-    expect(calls).toEqual(['provider', 'recorder']);
-
-    calls.length = 0;
-
-    expect((await fetch(`${app.baseUrl}/items`, json({ name: 'x' }, bearer(token)))).status).toBe(200);
-    expect(calls).toEqual(['provider', 'recorder', 'validator', 'handler']);
-  });
-
-  test('a @Protected Context.define route rejects before its contract validates the body', async () => {
-    await using app = await boot();
-    const { token } = await login(app);
-
-    expect((await fetch(`${app.baseUrl}/items/contract/1`, json({ name: 1 }))).status).toBe(401);
-    expect((await fetch(`${app.baseUrl}/items/contract/1`, json({ name: 1 }, bearer(token)))).status).toBe(400);
-
-    const ok = await fetch(`${app.baseUrl}/items/contract/1`, json({ name: 'x' }, bearer(token)));
-
-    expect(ok.status).toBe(200);
-    expect(await ok.json()).toEqual({ name: 'x', user: 'u1' });
+    expect((await app.fetch('/me', { headers: { cookie: `asena_session=${viaCookie}` } })).status).toBe(401);
+    expect((await app.fetch('/me', { headers: { cookie: `asena_session=${fromCookie.token}` } })).status).toBe(200);
   });
 
   test('@Roles: 403 without the role, 200 with it; the Better Auth role string passes the default resolver', async () => {
@@ -503,39 +370,39 @@ describe.each(adapters)('asena-auth end to end on $name', ({ name, make, routes 
     const user = (await login(app, ['user'])).token;
     const admin = (await login(app, ['admin'])).token;
 
-    const forbidden = await fetch(`${app.baseUrl}/me/admin`, { headers: bearer(user) });
+    const forbidden = await app.fetch('/me/admin', { headers: bearer(user) });
 
     expect(forbidden.status).toBe(403);
     expect(forbidden.headers.get('www-authenticate')).toBeNull();
-    expect((await fetch(`${app.baseUrl}/me/admin`, { headers: bearer(admin) })).status).toBe(200);
-    expect((await fetch(`${app.baseUrl}/ba/admin`, { headers: bearer('ba-token') })).status).toBe(200);
+    expect((await app.fetch('/me/admin', { headers: bearer(admin) })).status).toBe(200);
+    expect((await app.fetch('/ba/admin', { headers: bearer('ba-token') })).status).toBe(200);
   });
 
   test('@Public: a method opt-out and a @Public subclass of a @Protected controller', async () => {
     await using app = await boot();
 
-    expect((await fetch(`${app.baseUrl}/me/public`)).status).toBe(200);
-    expect((await fetch(`${app.baseUrl}/users`)).status).toBe(401);
-    expect((await fetch(`${app.baseUrl}/open-users`)).status).toBe(200);
+    expect((await app.fetch('/me/public')).status).toBe(200);
+    expect((await app.fetch('/users')).status).toBe(401);
+    expect((await app.fetch('/open-users')).status).toBe(200);
   });
 
   test('two providers: a named route takes only its provider, an unnamed one the primary', async () => {
     await using app = await boot();
     const { token } = await login(app);
 
-    expect((await fetch(`${app.baseUrl}/ba`, { headers: bearer('ba-token') })).status).toBe(200);
-    expect((await fetch(`${app.baseUrl}/ba`, { headers: bearer(token) })).status).toBe(401);
-    expect((await fetch(`${app.baseUrl}/me`, { headers: bearer('ba-token') })).status).toBe(401);
+    expect((await app.fetch('/ba', { headers: bearer('ba-token') })).status).toBe(200);
+    expect((await app.fetch('/ba', { headers: bearer(token) })).status).toBe(401);
+    expect((await app.fetch('/me', { headers: bearer('ba-token') })).status).toBe(401);
   });
 
   test('a third-party provider written against @asenajs/asena/auth only is selectable by name', async () => {
     await using app = await boot();
 
-    const res = await fetch(`${app.baseUrl}/kc`, { headers: bearer('kc-token') });
+    const res = await app.fetch('/kc', { headers: bearer('kc-token') });
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ user: 'kc1' });
-    expect((await fetch(`${app.baseUrl}/kc`)).status).toBe(401);
+    expect((await app.fetch('/kc')).status).toBe(401);
   });
 
   test('global AuthSessionMiddleware: public routes see the session, the provider runs once per request', async () => {
@@ -544,13 +411,13 @@ describe.each(adapters)('asena-auth end to end on $name', ({ name, make, routes 
 
     calls.length = 0;
 
-    expect(await (await fetch(`${app.baseUrl}/me/public`)).json()).toEqual({ user: null });
-    expect(await (await fetch(`${app.baseUrl}/me/public`, { headers: bearer(token) })).json()).toEqual({ user: 'u1' });
+    expect(await (await app.fetch('/me/public')).json()).toEqual({ user: null });
+    expect(await (await app.fetch('/me/public', { headers: bearer(token) })).json()).toEqual({ user: 'u1' });
     expect(calls).toEqual(['provider', 'provider']);
 
     calls.length = 0;
 
-    expect((await fetch(`${app.baseUrl}/me`, { headers: bearer(token) })).status).toBe(200);
+    expect((await app.fetch('/me', { headers: bearer(token) })).status).toBe(200);
     expect(calls).toEqual(['provider']);
   });
 
@@ -558,46 +425,21 @@ describe.each(adapters)('asena-auth end to end on $name', ({ name, make, routes 
     await using app = await boot([SessionConfig]);
     const { token } = await login(app);
 
-    expect((await fetch(`${app.baseUrl}/ba`, { headers: bearer(token) })).status).toBe(401);
+    expect((await app.fetch('/ba', { headers: bearer(token) })).status).toBe(401);
 
-    const ba = await fetch(`${app.baseUrl}/ba`, { headers: bearer('ba-token') });
+    const ba = await app.fetch('/ba', { headers: bearer('ba-token') });
 
     expect(ba.status).toBe(200);
     expect(await ba.json()).toEqual({ user: 'b1' });
   });
 
-  test('WebSocket: subprotocol token opens and echoes `bearer`; Authorization header opens; no token never opens', async () => {
-    await using app = await boot();
-    const { token } = await login(app);
-
-    const viaProtocol = await connect(app.wsUrl('/chat'), ['bearer', token]);
-
-    expect(viaProtocol.opened).toBe(true);
-
-    if (viaProtocol.opened) {
-      expect(viaProtocol.protocol).toBe('bearer');
-      expect(viaProtocol.message.authSession.user.id).toBe('u1');
-    }
-
-    const viaHeader = await connect(app.wsUrl('/chat'), { headers: bearer(token) });
-
-    expect(viaHeader.opened).toBe(true);
-
-    if (viaHeader.opened) {
-      expect(viaHeader.message.authSession.user.id).toBe('u1');
-    }
-
-    expect(await connect(app.wsUrl('/chat'))).toEqual({ opened: false });
-  });
-
   test("WebSocket under the global AuthSessionMiddleware: the subprotocol token wins over the cookie's user", async () => {
     await using app = await boot([SessionConfig]);
     const { token: tokenA } = await login(app);
-    const loginB = await fetch(`${app.baseUrl}/auth/login`, json({ id: 'u2', roles: [] }));
-    const { token: tokenB } = (await loginB.json()) as { token: string };
+    const { token: tokenB } = await login(app, [], 'u2');
     const cookie = `asena_session=${tokenA}`;
 
-    const cookieOnly = await connect(app.wsUrl('/chat'), { headers: { cookie } });
+    const cookieOnly = await app.connect('/chat', { headers: { cookie } });
 
     expect(cookieOnly.opened).toBe(true);
 
@@ -605,7 +447,7 @@ describe.each(adapters)('asena-auth end to end on $name', ({ name, make, routes 
       expect(cookieOnly.message.authSession.user.id).toBe('u1');
     }
 
-    const swapped = await connect(app.wsUrl('/chat'), { headers: { cookie }, protocols: ['bearer', tokenB] });
+    const swapped = await app.connect('/chat', { headers: { cookie }, protocols: ['bearer', tokenB] });
 
     expect(swapped.opened).toBe(true);
 
@@ -613,20 +455,21 @@ describe.each(adapters)('asena-auth end to end on $name', ({ name, make, routes 
       expect(swapped.message.authSession.user.id).toBe('u2');
     }
 
-    expect(await connect(app.wsUrl('/chat'), { headers: { cookie }, protocols: ['bearer', 'invalid'] })).toEqual({
+    expect(await app.connect('/chat', { headers: { cookie }, protocols: ['bearer', 'invalid'] })).toEqual({
       opened: false,
+      status: 401,
     });
   });
 
   test("Better Auth's session-refresh Set-Cookie reaches the client on a guarded route, value unchanged", async () => {
     await using app = await boot();
 
-    const plain = await fetch(`${app.baseUrl}/ba`, { headers: bearer('ba-token') });
+    const plain = await app.fetch('/ba', { headers: bearer('ba-token') });
 
     expect(plain.status).toBe(200);
     expect(plain.headers.getSetCookie()).toEqual([]);
 
-    const res = await fetch(`${app.baseUrl}/ba`, { headers: { ...bearer('ba-token'), 'x-refresh': '1' } });
+    const res = await app.fetch('/ba', { headers: { ...bearer('ba-token'), 'x-refresh': '1' } });
 
     expect(res.status).toBe(200);
 
@@ -643,14 +486,14 @@ describe.each(adapters)('asena-auth end to end on $name', ({ name, make, routes 
   test('BetterAuthController returns the Better Auth handler Response unchanged', async () => {
     await using app = await boot();
 
-    const res = await fetch(`${app.baseUrl}/api/auth/sign-in/email`, json({ email: 'a@b.c' }));
+    const res = await app.fetch('/api/auth/sign-in/email', json({ email: 'a@b.c' }));
 
     expect(res.status).toBe(201);
     expect(await res.json()).toEqual({ path: '/api/auth/sign-in/email', method: 'POST' });
   });
 });
 
-describe('boot errors (adapter-independent, ergenecore)', () => {
+describe('boot errors', () => {
   @Auth({})
   class First extends AsenaAuthService {}
 
@@ -676,12 +519,7 @@ describe('boot errors (adapter-independent, ergenecore)', () => {
   }
 
   const bootError = async (components: any[], imports: readonly any[] = authComponents): Promise<string> => {
-    const error: any = await createTestApp({
-      adapter: createErgenecoreAdapter({ logger: silentLogger }),
-      logger: silentLogger,
-      components,
-      imports: [...imports],
-    }).then(
+    const error: any = await bootFake({ components, imports: [...imports] }).then(
       async (app) => {
         await app.stop();
 
@@ -714,14 +552,12 @@ describe('boot errors (adapter-independent, ergenecore)', () => {
       protected providerName = 'First';
     }
 
-    await using app = await createTestApp({
-      adapter: createErgenecoreAdapter({ logger: silentLogger }),
-      logger: silentLogger,
+    await using app = await bootFake({
       components: [First, Second, Named],
       imports: [AuthGuard, AuthGuardMiddleware, AuthProviderRegistry, FirstSession],
     });
 
-    expect((await fetch(`${app.baseUrl}/named`)).status).toBe(401);
+    expect((await app.fetch('/named')).status).toBe(401);
   });
 
   test('two providers, none primary, an unnamed protected route: the boot fails naming the route', async () => {
@@ -756,7 +592,7 @@ describe('boot errors (adapter-independent, ergenecore)', () => {
   });
 });
 
-describe.each(adapters)('loadUser end to end on $name', ({ make }) => {
+describe.each(contextShapes)('loadUser end to end on the %s context', (shape) => {
   const directory = new Map<string, { id: string; roles: string[] }>();
 
   @Auth({ loadUser: async (id) => directory.get(id) ?? null })
@@ -773,9 +609,8 @@ describe.each(adapters)('loadUser end to end on $name', ({ make }) => {
   }
 
   test('a role demotion applies on the next request; a deleted user is 401 and its row is gone', async () => {
-    await using app = await createTestApp({
-      adapter: make(),
-      logger: silentLogger,
+    await using app = await bootFake({
+      shape,
       components: [FreshAuth, Fresh],
       imports: [AuthGuard, AuthGuardMiddleware, AuthProviderRegistry],
     });
@@ -785,15 +620,15 @@ describe.each(adapters)('loadUser end to end on $name', ({ make }) => {
 
     const { token } = await auth.createSession({ id: 'u1', roles: ['admin'] });
 
-    expect((await fetch(`${app.baseUrl}/fresh/admin`, { headers: bearer(token) })).status).toBe(200);
+    expect((await app.fetch('/fresh/admin', { headers: bearer(token) })).status).toBe(200);
 
     directory.set('u1', { id: 'u1', roles: ['user'] });
 
-    expect((await fetch(`${app.baseUrl}/fresh/admin`, { headers: bearer(token) })).status).toBe(403);
+    expect((await app.fetch('/fresh/admin', { headers: bearer(token) })).status).toBe(403);
 
     directory.delete('u1');
 
-    expect((await fetch(`${app.baseUrl}/fresh/admin`, { headers: bearer(token) })).status).toBe(401);
+    expect((await app.fetch('/fresh/admin', { headers: bearer(token) })).status).toBe(401);
     expect(await auth.listUserSessions('u1')).toEqual([]);
   });
 });

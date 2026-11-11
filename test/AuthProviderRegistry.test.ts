@@ -3,12 +3,12 @@ import { Protected } from '@asenajs/asena/auth';
 import type { AsenaAuthProvider } from '@asenajs/asena/auth';
 import { Controller } from '@asenajs/asena/decorators';
 import { Get } from '@asenajs/asena/decorators/http';
-import { createCapturingLogger, createTestApp, silentLogger } from '@asenajs/asena/test';
-import { createErgenecoreAdapter } from '@asenajs/ergenecore';
+import { createCapturingLogger, silentLogger } from '@asenajs/asena/test';
 import { AsenaAuthService } from '../lib/AsenaAuthService';
 import { Auth } from '../lib/decorators';
 import { AuthGuard, AuthGuardMiddleware, AuthProviderRegistry } from '../lib/guard';
 import { AUTH_REGISTRY_NAME } from '../lib/types';
+import { bootFake } from './support/fakeAdapter';
 
 @Auth({})
 class Native extends AsenaAuthService {}
@@ -52,7 +52,7 @@ class UnknownProvider {
 const guardComponents = [AuthGuard, AuthGuardMiddleware, AuthProviderRegistry];
 
 const boot = (components: any[], imports: any[] = guardComponents, logger: any = silentLogger) =>
-  createTestApp({ adapter: createErgenecoreAdapter({ logger: silentLogger }), logger, components, imports });
+  bootFake({ logger, components, imports });
 
 const bootError = async (components: any[], imports?: any[]): Promise<string> => {
   try {

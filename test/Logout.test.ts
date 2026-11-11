@@ -3,10 +3,8 @@ import { Protected } from '@asenajs/asena/auth';
 import { Controller } from '@asenajs/asena/decorators';
 import { Get, Post } from '@asenajs/asena/decorators/http';
 import { Inject } from '@asenajs/asena/decorators/ioc';
-import { createTestApp, silentLogger } from '@asenajs/asena/test';
-import { createErgenecoreAdapter } from '@asenajs/ergenecore';
-import { createHonoAdapter } from '@asenajs/hono-adapter';
 import { AsenaAuthService, Auth, AuthGuard, AuthGuardMiddleware, AuthProviderRegistry } from '../index';
+import { bootFake, contextShapes } from './support/fakeAdapter';
 
 @Auth({})
 class LogoutAuth extends AsenaAuthService {}
@@ -33,22 +31,16 @@ class Me {
   }
 }
 
-const adapters = [
-  { name: 'ergenecore', make: () => createErgenecoreAdapter({ logger: silentLogger }) },
-  { name: 'hono', make: () => createHonoAdapter({ logger: silentLogger })[0] },
-];
-
-describe.each(adapters)('logout edge cases on $name', ({ make }) => {
+describe.each(contextShapes)('logout edge cases on the %s context', (shape) => {
   const boot = () =>
-    createTestApp({
-      adapter: make() as any,
-      logger: silentLogger,
+    bootFake({
+      shape,
       components: [LogoutAuth, SessionRoutes, Me],
       imports: [AuthGuard, AuthGuardMiddleware, AuthProviderRegistry],
     });
 
   const status = async (app: Awaited<ReturnType<typeof boot>>, headers: Record<string, string>) =>
-    (await fetch(`${app.baseUrl}/me`, { headers })).status;
+    (await app.fetch('/me', { headers })).status;
 
   const deletion = (res: Response) => {
     const setCookies = res.headers.getSetCookie().map((c) => Bun.Cookie.parse(c));
@@ -64,7 +56,7 @@ describe.each(adapters)('logout edge cases on $name', ({ make }) => {
     const { token: viaBearer } = await auth.createSession({ id: 'u1' });
     const { token: viaCookie } = await auth.createSession({ id: 'u2' });
 
-    const res = await fetch(`${app.baseUrl}/session/logout`, {
+    const res = await app.fetch('/session/logout', {
       method: 'POST',
       headers: { authorization: `Bearer ${viaBearer}`, cookie: `asena_session=${viaCookie}` },
     });
@@ -81,7 +73,7 @@ describe.each(adapters)('logout edge cases on $name', ({ make }) => {
     const { token } = await auth.createSession({ id: 'u1' });
     const cookie = `asena_session=${token}`;
 
-    const res = await fetch(`${app.baseUrl}/session/logout`, {
+    const res = await app.fetch('/session/logout', {
       method: 'POST',
       headers: { cookie, origin: 'https://evil.example', 'sec-fetch-site': 'cross-site' },
     });
