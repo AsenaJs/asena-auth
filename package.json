@@ -38,10 +38,10 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/AsenaJs/auth.git"
+    "url": "git+https://github.com/AsenaJs/asena-auth.git"
   },
   "bugs": {
-    "url": "https://github.com/AsenaJs/auth/issues"
+    "url": "https://github.com/AsenaJs/asena-auth/issues"
   },
   "homepage": "https://asena.sh",
   "scripts": {
