@@ -34,7 +34,7 @@
     },
   },
   "packages": {
-    "@asenajs/asena": ["@asenajs/asena@0.12.2", "", { "dependencies": { "reflect-metadata": "^0.2.2" } }, "sha512-b5u+IRBNx6GJ45jgeVCh+6plQTyjcUsNGCNRitCN20j5Hz96FqeX3Flak39hHu6JaaFCPE2wL9hyuG/1/a/C/A=="],
+    "@asenajs/asena": ["@asenajs/asena@0.12.4", "", { "dependencies": { "reflect-metadata": "^0.2.2" } }, "sha512-5sGa5KzPMvIo+rlkIXHpaJ4HrPqFWCI3hx4hTE7HYITLPvcENBbgnfPwLuZnDEYSx6j46TeztaO+U0y529LSDA=="],
 
     "@babel/runtime": ["@babel/runtime@7.29.10", "", {}, "sha512-NpugTzbKgGrNe45Ui32cN8vCFFMxVtP/9rtfwv0nP5FRDAjvYBxJcLVpYA9mr1jxP6cnIT7x9LUzuDTbWYYNRA=="],
 
